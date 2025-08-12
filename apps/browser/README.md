@@ -20,3 +20,6 @@ The Bitwarden browser extension is written using the Web Extension API and Angul
 ## Documentation
 
 Please refer to the [Browser section](https://contributing.bitwarden.com/getting-started/clients/browser/) of the [Contributing Documentation](https://contributing.bitwarden.com/) for build instructions, recommended tooling, code style tips, and lots of other great information to get you started.
+
+
+深入分析 DomQueryService，总结主要流程是怎样的，和哪些组件有交互，有没有复杂、难懂的部分呢，创建新的md文档，可视化的、详细的、真实的反应 DomQueryService 的功能点

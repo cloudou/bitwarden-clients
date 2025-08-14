@@ -162,7 +162,7 @@ export default class AutofillService implements AutofillServiceInterface {
 
     // Create a timeout observable that emits an empty array if pageDetailsFromTab$ hasn't emitted within 1 second.
     const pageDetailsTimeout$ = timer(1000).pipe(
-      map(() => []),
+      map(() => [] as PageDetail[]),
       takeUntil(sharedPageDetailsFromTab$),
     );
 
@@ -719,9 +719,44 @@ export default class AutofillService implements AutofillServiceInterface {
   }
 
   /**
-   * Generates the autofill script for the specified page details and cipher.
-   * @param {AutofillPageDetails} pageDetails
-   * @param {GenerateFillScriptOptions} options
+   * 生成用于页面自动填充的脚本（fillScript）。
+   *
+   * 该方法会根据当前页面解析结果（`pageDetails`）以及待填充的密文项（`options.cipher`）
+   * 计算出一组可在内容脚本中执行的动作（click/focus/fill），并以 `AutofillScript` 形式返回。
+   *
+   * 核心流程：
+   * 1) 兜底校验：无页面数据或无密文则直接返回 null。
+   * 2) 处理“自定义字段”：若密文包含自定义字段（`cipher.fields`），按字段名模糊匹配页面可见字段并先行填充。
+   *    - 使用 `findMatchingFieldIndex` 在字段各属性（id/name/label/placeholder）上做前缀/模糊匹配。
+   *    - 若为 `FieldType.Linked` 则取关联字段值；若为 `Boolean` 但值为空，则使用字符串 "false"。
+   *    - 使用 `filledFields` 去重，避免对同一 `opid` 重复下发动作。
+   * 3) 分类型分发：根据 `cipher.type`
+   *    - Login：调用 `generateLoginFillScript`，处理用户名/密码/TOTP 等逻辑与可见性/只读/是否仅填空字段等开关。
+   *    - Card：调用 `generateCardFillScript`，处理持卡人/卡号/有效期/安全码/品牌等，并支持单字段“合并有效期”。
+   *    - Identity：调用 `generateIdentityFillScript`，基于关键字匹配映射姓名/地址/邮箱/电话/公司等字段。
+   * 4) 返回构造完成的 `fillScript`；若类型不支持返回 null。
+   *
+   * 参数说明（部分来自 `GenerateFillScriptOptions`）：
+   * - `skipUsernameOnlyFill`：当页面无密码字段时，是否跳过仅填用户名/邮箱。
+   * - `onlyEmptyFields`：仅填充空字段，避免覆盖用户已有输入。
+   * - `onlyVisibleFields`：仅填充当前可见字段。
+   * - `fillNewPassword`：是否允许填充 `autocomplete="new-password"` 的新密码字段。
+   * - `allowTotpAutofill`：是否尝试在登录流程中填充 TOTP。
+   * - `autoSubmitLogin`：是否在登录表单填充完毕后自动提交。
+   * - `cipher`：待填充的密文视图（Login/Card/Identity）。
+   * - `tabUrl`：当前标签页 URL，用于 iframe 安全校验（与 `pageUrl` 比对）。
+   * - `defaultUriMatch`：默认 URI 匹配策略，参与 iframe 信任判断。
+   *
+   * 返回值：
+   * - `AutofillScript`：包含脚本动作数组 `script`、其他辅助属性（如 `untrustedIframe`、`autosubmit`）。
+   * - `null`：输入不完整或不支持的密文类型。
+   *
+   * 注意：
+   * - `filledFields` 用于记录已加入脚本的页面字段，防止重复生成动作。
+   * - 仅添加注释，不改变原有逻辑与行为。
+   *
+   * @param {AutofillPageDetails} pageDetails 页面解析得到的字段/表单/URL 等信息
+   * @param {GenerateFillScriptOptions} options 生成脚本的控制开关与密文数据
    * @returns {Promise<AutofillScript | null>}
    * @private
    */
@@ -729,15 +764,31 @@ export default class AutofillService implements AutofillServiceInterface {
     pageDetails: AutofillPageDetails,
     options: GenerateFillScriptOptions,
   ): Promise<AutofillScript | null> {
+    // ===== 兜底校验：确保必要数据存在 =====
+    // pageDetails: 包含页面所有可填充字段的详细信息（由内容脚本收集）
+    // options.cipher: 用户选择的密码库项目（包含要填充的数据）
     if (!pageDetails || !options.cipher) {
       return null;
     }
 
+    // ===== 初始化核心数据结构 =====
+    // fillScript: 最终生成的自动填充脚本，包含一系列要执行的动作
     let fillScript = new AutofillScript();
+
+    // filledFields: 记录已处理的字段，防止重复填充
+    // key: opid（页面字段的唯一标识符，由内容脚本生成）
+    // value: AutofillField对象（包含字段的所有属性）
     const filledFields: { [id: string]: AutofillField } = {};
+
+    // fields: 密文的自定义字段列表
+    // 用户可以为特定网站添加额外的填充字段（如安全问题、员工ID等）
     const fields = options.cipher.fields;
 
+    // ===== 第一步：处理自定义字段 =====
+    // 自定义字段允许用户为特定网站添加非标准的填充字段
+    // 例如：安全问题答案、PIN码、员工ID、会员号等
     if (fields && fields.length) {
+      // 收集所有自定义字段的名称，转换为小写以便不区分大小写匹配
       const fieldNames: string[] = [];
 
       fields.forEach((f) => {
@@ -746,43 +797,72 @@ export default class AutofillService implements AutofillServiceInterface {
         }
       });
 
+      // 遍历页面上的所有字段，寻找与自定义字段匹配的目标
       pageDetails.fields.forEach((field) => {
+        // 跳过已填充的字段，避免重复处理
         // eslint-disable-next-line
         if (filledFields.hasOwnProperty(field.opid)) {
           return;
         }
 
+        // 可见性检查：不填充不可见的普通字段
+        // 特殊例外：span元素用于显示只读的自定义字段值，即使不可见也要处理
         if (!field.viewable && field.tagName !== "span") {
           return;
         }
 
-        // Check if the input is an untyped/mistyped search input
+        // 搜索框过滤：排除搜索类输入框，避免误填
+        // 搜索框通常包含"search"、"query"等关键词
+        // 填充搜索框会影响用户体验，可能导致意外的搜索操作
         if (AutofillService.isSearchField(field)) {
           return;
         }
 
+        // 字段匹配：使用模糊匹配算法寻找对应的自定义字段
+        // findMatchingFieldIndex会检查字段的多个属性：
+        // - htmlID: 元素的id属性
+        // - htmlName: 元素的name属性
+        // - label相关: label-left、label-right、label-tag、label-aria
+        // - placeholder: 占位符文本
         const matchingIndex = this.findMatchingFieldIndex(field, fieldNames);
         if (matchingIndex > -1) {
           const matchingField: FieldView = fields[matchingIndex];
           let val: string;
+
+          // 处理链接字段类型
+          // 链接字段不存储值，而是引用其他字段的值
           if (matchingField.type === FieldType.Linked) {
-            // Assumption: Linked Field is not being used to autofill a boolean value
+            // 注意：假设链接字段不会链接到布尔类型的字段
             val = options.cipher.linkedFieldValue(matchingField.linkedId) as string;
           } else {
+            // 普通字段：直接使用存储的值
             val = matchingField.value;
+            // 布尔字段特殊处理：null值转换为"false"字符串
             if (val == null && matchingField.type === FieldType.Boolean) {
               val = "false";
             }
           }
 
+          // 记录字段已被处理并生成填充动作
+          // filledFields用于防止同一字段被多次填充
           filledFields[field.opid] = field;
+          // fillByOpid生成三个动作：click（激活）、focus（聚焦）、fill（填充）
           AutofillService.fillByOpid(fillScript, field, val);
         }
       });
     }
 
+    // ===== 第二步：根据密文类型生成特定的填充脚本 =====
+    // Bitwarden支持三种主要的密文类型，每种都有专门的填充逻辑
     switch (options.cipher.type) {
       case CipherType.Login:
+        // 登录类型密文处理
+        // 主要功能：
+        // - 查找并填充用户名字段（通常在密码字段之前）
+        // - 处理密码字段（支持多密码场景，如修改密码页面）
+        // - 可选的TOTP（双因素认证码）自动填充
+        // - iframe安全检查，防止钓鱼攻击
+        // - 支持自动提交登录表单（如果启用）
         fillScript = await this.generateLoginFillScript(
           fillScript,
           pageDetails,
@@ -790,7 +870,18 @@ export default class AutofillService implements AutofillServiceInterface {
           options,
         );
         break;
+
       case CipherType.Card:
+        // 信用卡类型密文处理
+        // 主要功能：
+        // - 持卡人姓名填充
+        // - 卡号填充（支持格式化）
+        // - 有效期处理：
+        //   * 分离的月/年字段
+        //   * 合并的有效期字段（MM/YY、MM/YYYY、MMYY等格式）
+        //   * 智能格式转换
+        // - CVV/安全码填充
+        // - 卡片品牌选择（如果页面有相应字段）
         fillScript = await this.generateCardFillScript(
           fillScript,
           pageDetails,
@@ -798,7 +889,21 @@ export default class AutofillService implements AutofillServiceInterface {
           options,
         );
         break;
+
       case CipherType.Identity:
+        // 身份信息类型密文处理
+        // 主要功能：
+        // - 姓名处理：
+        //   * 分离的名/中间名/姓字段
+        //   * 合并的全名字段（自动拼接）
+        // - 地址处理：
+        //   * 分离的地址行（address1、address2、address3）
+        //   * 合并的完整地址字段
+        // - 地区信息：
+        //   * 城市、州/省、邮编
+        //   * 国家（支持全名到ISO代码转换）
+        // - 联系信息：电话、邮箱
+        // - 其他：用户名、公司等
         fillScript = await this.generateIdentityFillScript(
           fillScript,
           pageDetails,
@@ -806,19 +911,37 @@ export default class AutofillService implements AutofillServiceInterface {
           options,
         );
         break;
+
       default:
+        // 不支持的密文类型，返回null
+        // 未来可能支持的类型：SecureNote等
         return null;
     }
 
+    // ===== 返回构建完成的填充脚本 =====
+    // fillScript包含以下关键信息：
+    // - script: 动作数组，每个动作格式为[command, ...args]
+    //   * "click_on_opid": 点击指定字段
+    //   * "focus_by_opid": 聚焦指定字段
+    //   * "fill_by_opid": 填充指定字段的值
+    // - properties: 脚本属性
+    //   * delay_between_operations: 操作间延迟（毫秒）
+    // - savedUrls: 保存的URL列表（用于验证当前页面）
+    // - untrustedIframe: 布尔值，标识是否在不受信任的iframe中
+    // - autosubmit: 自动提交的表单ID列表
     return fillScript;
   }
 
   /**
-   * Generates the autofill script for the specified page details and login cipher item.
-   * @param {AutofillScript} fillScript
-   * @param {AutofillPageDetails} pageDetails
-   * @param {{[p: string]: AutofillField}} filledFields
-   * @param {GenerateFillScriptOptions} options
+   * 生成登录类型密文的自动填充脚本
+   *
+   * 该方法负责处理用户名、密码和TOTP（双因素认证）字段的填充逻辑。
+   * 会智能识别页面上的登录表单，并根据不同的页面结构采用不同的填充策略。
+   *
+   * @param {AutofillScript} fillScript - 正在构建的填充脚本对象
+   * @param {AutofillPageDetails} pageDetails - 页面详情，包含所有可填充字段
+   * @param {{[p: string]: AutofillField}} filledFields - 已填充字段的记录
+   * @param {GenerateFillScriptOptions} options - 填充选项和配置
    * @returns {Promise<AutofillScript | null>}
    * @private
    */
@@ -828,55 +951,83 @@ export default class AutofillService implements AutofillServiceInterface {
     filledFields: { [id: string]: AutofillField },
     options: GenerateFillScriptOptions,
   ): Promise<AutofillScript | null> {
+    // 验证密文是否包含登录信息
     if (!options.cipher.login) {
       return null;
     }
 
+    // ===== 初始化字段收集容器 =====
+    // passwords: 页面上找到的所有密码字段
+    // usernames: 页面上找到的所有用户名字段
+    // totps: 页面上找到的所有TOTP/验证码字段
     const passwords: AutofillField[] = [];
     const usernames: AutofillField[] = [];
     const totps: AutofillField[] = [];
-    let pf: AutofillField = null;
-    let username: AutofillField = null;
-    let totp: AutofillField = null;
+
+    // 临时变量：用于处理过程中的字段引用
+    let pf: AutofillField = null; // 当前处理的密码字段
+    let username: AutofillField = null; // 当前找到的用户名字段
+    let totp: AutofillField = null; // 当前找到的TOTP字段
+
     const login = options.cipher.login;
+
+    // 设置保存的URL列表（排除"从不匹配"的URL）
+    // 这些URL用于验证当前页面是否匹配保存的登录项
     fillScript.savedUrls =
       login?.uris?.filter((u) => u.match != UriMatchStrategy.Never).map((u) => u.uri) ?? [];
 
+    // 检查是否在不受信任的iframe中
+    // 如果页面URL与标签页URL不匹配，可能是钓鱼攻击
     fillScript.untrustedIframe = await this.inUntrustedIframe(pageDetails.url, options);
 
+    // ===== 第一步：查找页面上的密码字段 =====
+    // 首先尝试查找可见的、非只读的密码字段
+    // loadPasswordFields参数说明：
+    // - canBeHidden: false - 只查找可见字段
+    // - canBeReadOnly: false - 排除只读字段
+    // - onlyEmptyFields: 根据选项决定是否只填充空字段
+    // - fillNewPassword: 是否填充new-password类型字段（用于注册/修改密码）
     let passwordFields = AutofillService.loadPasswordFields(
       pageDetails,
-      false,
-      false,
+      false, // canBeHidden
+      false, // canBeReadOnly
       options.onlyEmptyFields,
       options.fillNewPassword,
     );
+
+    // 如果没找到可见的密码字段，且不限制只填充可见字段
+    // 则尝试查找隐藏的密码字段（某些网站使用CSS隐藏密码字段）
     if (!passwordFields.length && !options.onlyVisibleFields) {
-      // not able to find any viewable password fields. maybe there are some "hidden" ones?
       passwordFields = AutofillService.loadPasswordFields(
         pageDetails,
-        true,
-        true,
+        true, // canBeHidden - 包括隐藏字段
+        true, // canBeReadOnly - 包括只读字段
         options.onlyEmptyFields,
         options.fillNewPassword,
       );
     }
 
+    // ===== 第二步：在表单中查找相关字段 =====
+    // 遍历页面上的所有表单，为每个密码字段查找对应的用户名和TOTP字段
     for (const formKey in pageDetails.forms) {
       // eslint-disable-next-line
       if (!pageDetails.forms.hasOwnProperty(formKey)) {
         continue;
       }
 
+      // 处理每个密码字段
       passwordFields.forEach((passField) => {
         pf = passField;
         passwords.push(pf);
 
+        // 查找用户名字段（如果密文包含用户名）
         if (login.username) {
+          // 首先在同一表单中查找可见的用户名字段
+          // findUsernameField会查找密码字段之前的输入字段
           username = this.findUsernameField(pageDetails, pf, false, false, false);
 
+          // 如果没找到可见的用户名字段，尝试查找隐藏的
           if (!username && !options.onlyVisibleFields) {
-            // not able to find any viewable username fields. maybe there are some "hidden" ones?
             username = this.findUsernameField(pageDetails, pf, true, true, false);
           }
 
@@ -885,11 +1036,13 @@ export default class AutofillService implements AutofillServiceInterface {
           }
         }
 
+        // 查找TOTP字段（如果允许自动填充TOTP且密文包含TOTP）
         if (options.allowTotpAutofill && login.totp) {
+          // 首先查找可见的TOTP字段
           totp = this.findTotpField(pageDetails, pf, false, false, false);
 
+          // 如果没找到可见的TOTP字段，尝试查找隐藏的
           if (!totp && !options.onlyVisibleFields) {
-            // not able to find any viewable totp fields. maybe there are some "hidden" ones?
             totp = this.findTotpField(pageDetails, pf, true, true, false);
           }
 
@@ -900,18 +1053,21 @@ export default class AutofillService implements AutofillServiceInterface {
       });
     }
 
+    // ===== 第三步：处理无表单的密码字段 =====
+    // 某些页面的密码字段不在表单中（如动态生成的登录框）
+    // 这种情况下，使用第一个密码字段，并查找它之前的输入字段作为用户名
     if (passwordFields.length && !passwords.length) {
-      // The page does not have any forms with password fields. Use the first password field on the page and the
-      // input field just before it as the username.
-
+      // 使用页面上第一个密码字段
       pf = passwordFields[0];
       passwords.push(pf);
 
+      // 查找用户名字段：在密码字段之前的输入字段
+      // elementNumber > 0 确保密码字段不是页面上第一个字段
       if (login.username && pf.elementNumber > 0) {
+        // withoutForm: true - 不限制在同一表单中查找
         username = this.findUsernameField(pageDetails, pf, false, false, true);
 
         if (!username && !options.onlyVisibleFields) {
-          // not able to find any viewable username fields. maybe there are some "hidden" ones?
           username = this.findUsernameField(pageDetails, pf, true, true, true);
         }
 
@@ -920,11 +1076,11 @@ export default class AutofillService implements AutofillServiceInterface {
         }
       }
 
+      // 查找TOTP字段（同样不限制在表单中）
       if (options.allowTotpAutofill && login.totp && pf.elementNumber > 0) {
         totp = this.findTotpField(pageDetails, pf, false, false, true);
 
         if (!totp && !options.onlyVisibleFields) {
-          // not able to find any viewable username fields. maybe there are some "hidden" ones?
           totp = this.findTotpField(pageDetails, pf, true, true, true);
         }
 
@@ -934,29 +1090,40 @@ export default class AutofillService implements AutofillServiceInterface {
       }
     }
 
+    // ===== 第四步：处理没有密码字段的页面 =====
+    // 某些页面可能只有用户名或TOTP字段（如多步骤登录）
+    // 注意：用户名和TOTP字段是互斥的，不会同时填充
     if (!passwordFields.length) {
-      // If there are no passwords, username or TOTP fields may be present.
-      // username and TOTP fields are mutually exclusive
       pageDetails.fields.forEach((field) => {
+        // 只处理可见字段
         if (!field.viewable) {
           return;
         }
 
+        // 判断是否为TOTP字段
+        // TOTP字段特征：
+        // - 类型为number、tel或text
+        // - 字段名包含TOTP相关关键词
+        // - 或者autocomplete属性为"one-time-code"
         const isFillableTotpField =
           options.allowTotpAutofill &&
           ["number", "tel", "text"].some((t) => t === field.type) &&
           (AutofillService.fieldIsFuzzyMatch(field, [
-            ...AutoFillConstants.TotpFieldNames,
-            ...AutoFillConstants.AmbiguousTotpFieldNames,
+            ...AutoFillConstants.TotpFieldNames, // 明确的TOTP字段名
+            ...AutoFillConstants.AmbiguousTotpFieldNames, // 模糊的TOTP字段名
           ]) ||
             field.autoCompleteType === "one-time-code");
 
+        // 判断是否为用户名字段
+        // 用户名字段特征：
+        // - 类型为email、tel或text
+        // - 字段名包含用户名相关关键词
         const isFillableUsernameField =
           !options.skipUsernameOnlyFill &&
           ["email", "tel", "text"].some((t) => t === field.type) &&
           AutofillService.fieldIsFuzzyMatch(field, AutoFillConstants.UsernameFieldNames);
 
-        // Prefer more uniquely keyworded fields first.
+        // 优先填充更明确的字段类型
         switch (true) {
           case isFillableTotpField:
             totps.push(field);
@@ -970,54 +1137,83 @@ export default class AutofillService implements AutofillServiceInterface {
       });
     }
 
+    // ===== 第五步：生成填充动作 =====
+    // 记录所有需要填充的表单ID（用于自动提交）
     const formElementsSet = new Set<string>();
+
+    // 填充用户名字段
     usernames.forEach((u) => {
+      // 跳过已填充的字段
       // eslint-disable-next-line
       if (filledFields.hasOwnProperty(u.opid)) {
         return;
       }
 
+      // 记录字段已填充，生成填充动作
       filledFields[u.opid] = u;
       AutofillService.fillByOpid(fillScript, u, login.username);
+      // 记录该字段所属的表单ID
       formElementsSet.add(u.form);
     });
 
+    // 填充密码字段
     passwords.forEach((p) => {
+      // 跳过已填充的字段
       // eslint-disable-next-line
       if (filledFields.hasOwnProperty(p.opid)) {
         return;
       }
 
+      // 记录字段已填充，生成填充动作
       filledFields[p.opid] = p;
       AutofillService.fillByOpid(fillScript, p, login.password);
+      // 记录该字段所属的表单ID
       formElementsSet.add(p.form);
     });
 
+    // 如果启用了自动提交，记录需要提交的表单
+    // autoSubmitLogin: 填充完成后自动提交登录表单
     if (options.autoSubmitLogin && formElementsSet.size) {
       fillScript.autosubmit = Array.from(formElementsSet);
     }
 
+    // ===== 第六步：处理TOTP字段（双因素认证） =====
     if (options.allowTotpAutofill) {
+      // 并行处理所有TOTP字段
       await Promise.all(
         totps.map(async (t, i) => {
+          // 跳过已填充的字段
           if (Object.prototype.hasOwnProperty.call(filledFields, t.opid)) {
             return;
           }
 
           filledFields[t.opid] = t;
+
+          // 生成TOTP验证码
+          // totpService.getCode$会根据密钥实时生成6位验证码
           const totpResponse = await firstValueFrom(
             this.totpService.getCode$(options.cipher.login.totp),
           );
+
           let totpValue = totpResponse.code;
+
+          // 特殊处理：如果TOTP码长度等于TOTP字段数量
+          // 则每个字段填充一个数字（用于分离的验证码输入框）
+          // 例如：6位验证码"123456"，6个输入框，每个填充一位
           if (totpValue.length == totps.length) {
             totpValue = totpValue.charAt(i);
           }
+
           AutofillService.fillByOpid(fillScript, t, totpValue);
         }),
       );
     }
 
+    // ===== 第七步：设置焦点 =====
+    // 将焦点设置到最后一个填充的字段（优先密码字段）
+    // 这样用户可以直接按回车提交表单
     fillScript = AutofillService.setFillScriptForFocus(filledFields, fillScript);
+
     return fillScript;
   }
 
@@ -1380,35 +1576,81 @@ export default class AutofillService implements AutofillServiceInterface {
   }
 
   /**
-   * Determines whether an iframe is potentially dangerous ("untrusted") to autofill
-   * @param {string} pageUrl The url of the page/iframe, usually from AutofillPageDetails
-   * @param {GenerateFillScriptOptions} options The GenerateFillScript options
-   * @returns {boolean} `true` if the iframe is untrusted and a warning should be shown, `false` otherwise
+   * 判断当前iframe是否"不受信任"（可能存在安全风险）
+   *
+   * 这是一个重要的安全机制，用于防止钓鱼攻击。攻击者可能在合法网站中嵌入恶意iframe，
+   * 试图窃取用户在iframe中输入的凭据。
+   *
+   * @param {string} pageUrl - 当前页面/iframe的URL（由内容脚本获取）
+   * @param {GenerateFillScriptOptions} options - 包含tabUrl和其他配置
+   * @returns {boolean} `true` 表示iframe不受信任，应该警告用户；`false` 表示安全
    * @private
    */
   private async inUntrustedIframe(
     pageUrl: string,
     options: GenerateFillScriptOptions,
   ): Promise<boolean> {
-    // If the pageUrl (from the content script) matches the tabUrl (from the sender tab), we are not in an iframe
-    // This also avoids a false positive if no URI is saved and the user triggers autofill anyway
+    // ===== 第一步：快速判断 - 是否在iframe中 =====
+    // pageUrl: 内容脚本运行所在的实际URL（可能是iframe的URL）
+    // tabUrl: 浏览器标签页的主URL
+    // 如果两者相同，说明内容脚本运行在主页面而非iframe中，直接返回安全
     if (pageUrl === options.tabUrl) {
-      return false;
+      return false; // 不在iframe中，安全
     }
 
-    // Check the pageUrl against cipher URIs using the configured match detection.
-    // Remember: if we are in this function, the tabUrl already matches a saved URI for the login.
-    // We need to verify the pageUrl also matches.
+    // ===== 第二步：深度检查 - iframe URL是否匹配保存的登录项 =====
+    // 到这里说明我们在iframe中，需要验证这个iframe是否可信
+    //
+    // 背景知识：
+    // - 用户触发自动填充时，tabUrl已经匹配了保存的登录项
+    // - 但iframe的URL（pageUrl）可能不同
+    // - 例如：在example.com页面中嵌入了evil.com的iframe
+
+    // 获取等效域名列表
+    // 等效域名是用户配置的一组相互信任的域名
+    // 例如：google.com、accounts.google.com、youtube.com可能被配置为等效域名
     const equivalentDomains = await firstValueFrom(
       this.domainSettingsService.getUrlEquivalentDomains(pageUrl),
     );
+
+    // 检查iframe的URL是否匹配密文中保存的任何URI
+    // matchesUri会根据用户配置的匹配策略进行检查：
+    // - Domain: 域名匹配（默认）
+    // - Host: 主机名完全匹配
+    // - StartsWith: URL前缀匹配
+    // - Exact: URL完全匹配
+    // - RegEx: 正则表达式匹配
     const matchesUri = options.cipher.login.matchesUri(
-      pageUrl,
-      equivalentDomains,
-      options.defaultUriMatch,
+      pageUrl, // iframe的URL
+      equivalentDomains, // 等效域名列表
+      options.defaultUriMatch, // 默认匹配策略
     );
+
+    // ===== 返回判断结果 =====
+    // matchesUri为true表示iframe URL匹配保存的登录项，是可信的
+    // 返回值取反：
+    // - 匹配（matchesUri=true） -> 可信（返回false）
+    // - 不匹配（matchesUri=false） -> 不可信（返回true）
     return !matchesUri;
   }
+
+  // 安全场景示例：
+  // 1. 主页面：https://example.com/login
+  //    iframe：https://example.com/auth-widget
+  //    结果：可信（同域iframe）
+  //
+  // 2. 主页面：https://microsoft.com
+  //    iframe：https://login.microsoftonline.com
+  //    结果：可信（如果配置了等效域名）
+  //
+  // 危险场景示例：
+  // 1. 主页面：https://legitimate-site.com
+  //    iframe：https://phishing-site.com/fake-login
+  //    结果：不可信（域名不匹配）
+  //
+  // 2. 主页面：https://blog.example.com
+  //    iframe：https://evil.com/steal-password
+  //    结果：不可信（恶意iframe）
 
   /**
    * Used when handling autofill on credit card fields. Determines whether
@@ -2431,14 +2673,17 @@ export default class AutofillService implements AutofillServiceInterface {
   }
 
   /**
-   * Accepts a pageDetails object with a list of fields and returns a list of
-   * fields that are likely to be username fields.
-   * @param {AutofillPageDetails} pageDetails
-   * @param {AutofillField} passwordField
-   * @param {boolean} canBeHidden
-   * @param {boolean} canBeReadOnly
-   * @param {boolean} withoutForm
-   * @returns {AutofillField}
+   * 查找与密码字段关联的用户名字段
+   *
+   * 该方法使用智能算法在页面上查找最可能的用户名输入字段。
+   * 核心策略：在密码字段之前查找合适的输入字段，优先选择明确标记为用户名的字段。
+   *
+   * @param {AutofillPageDetails} pageDetails - 页面详情，包含所有字段信息
+   * @param {AutofillField} passwordField - 参考的密码字段
+   * @param {boolean} canBeHidden - 是否可以选择隐藏的字段
+   * @param {boolean} canBeReadOnly - 是否可以选择只读字段
+   * @param {boolean} withoutForm - 是否可以跨表单查找（true表示不限制同一表单）
+   * @returns {AutofillField | null} 找到的用户名字段，或null
    * @private
    */
   private findUsernameField(
@@ -2448,33 +2693,76 @@ export default class AutofillService implements AutofillServiceInterface {
     canBeReadOnly: boolean,
     withoutForm: boolean,
   ): AutofillField | null {
+    // 初始化：保存找到的候选用户名字段
+    // 采用"最后一个合适的字段"策略，因为用户名通常紧邻密码字段
     let usernameField: AutofillField = null;
+
+    // 遍历页面上的所有字段
     for (let i = 0; i < pageDetails.fields.length; i++) {
       const f = pageDetails.fields[i];
+
+      // ===== 排除条件1：跳过自定义字段 =====
+      // forCustomFieldsOnly检查是否为span元素（用于显示只读自定义字段）
       if (AutofillService.forCustomFieldsOnly(f)) {
         continue;
       }
 
+      // ===== 排除条件2：位置检查 =====
+      // 用户名字段必须在密码字段之前（基于DOM顺序）
+      // elementNumber是字段在页面上的顺序编号
       if (f.elementNumber >= passwordField.elementNumber) {
-        break;
+        break; // 已经到达或超过密码字段位置，停止搜索
       }
 
+      // ===== 综合条件判断 =====
+      // 检查字段是否满足所有要求
       if (
+        // 1. 状态检查：字段必须启用（非disabled）
         !f.disabled &&
+        // 2. 只读检查：根据参数决定是否接受只读字段
+        // canBeReadOnly=true: 接受只读字段
+        // canBeReadOnly=false: 字段必须可编辑（!f.readonly）
         (canBeReadOnly || !f.readonly) &&
+        // 3. 表单检查：根据参数决定是否限制在同一表单
+        // withoutForm=true: 不限制表单（跨表单查找）
+        // withoutForm=false: 必须在同一表单中（f.form === passwordField.form）
         (withoutForm || f.form === passwordField.form) &&
+        // 4. 可见性检查：根据参数决定是否接受隐藏字段
+        // canBeHidden=true: 接受隐藏字段
+        // canBeHidden=false: 字段必须可见（f.viewable）
         (canBeHidden || f.viewable) &&
+        // 5. 类型检查：用户名字段的常见类型
+        // - text: 普通文本输入
+        // - email: 邮箱输入（很多网站使用邮箱作为用户名）
+        // - tel: 电话输入（某些网站使用手机号作为用户名）
         (f.type === "text" || f.type === "email" || f.type === "tel")
       ) {
+        // ===== 候选字段更新 =====
+        // 符合条件的字段成为新的候选用户名字段
+        // 这里使用"最后一个符合条件"的策略，因为：
+        // 1. 用户名字段通常紧邻密码字段
+        // 2. 页面可能有多个符合条件的字段（如搜索框）
         usernameField = f;
 
+        // ===== 精确匹配优化 =====
+        // 检查字段是否明确标记为用户名字段
+        // UsernameFieldNames包含常见的用户名字段标识符：
+        // - "username", "user", "login", "email", "account", etc.
         if (this.findMatchingFieldIndex(f, AutoFillConstants.UsernameFieldNames) > -1) {
-          // We found an exact match. No need to keep looking.
+          // 找到精确匹配！这几乎肯定是用户名字段
+          // 立即返回，不再继续查找
           break;
         }
+        // 如果不是精确匹配，继续循环
+        // 可能会找到更接近密码字段的候选项
       }
     }
 
+    // 返回找到的用户名字段
+    // 可能是：
+    // 1. 精确匹配的用户名字段（最佳）
+    // 2. 最后一个符合条件的字段（次佳）
+    // 3. null（没有找到合适的字段）
     return usernameField;
   }
 

@@ -557,3 +557,11 @@ return merge(sharedPageDetailsFromTab$, pageDetailsFallback$, pageDetailsTimeout
 4. **良好的性能优化**：通过缓存、延迟加载等策略提升响应速度
 
 同时，服务也存在一些可以改进的地方，特别是在代码组织和类型安全方面。随着功能的不断增加，考虑模块化重构将有助于提高代码的可维护性。
+
+## loadAutofillScriptsOnInstall 详细流程图
+
+![loadAutofillScriptsOnInstall 流程图](./loadAutofillScriptsOnInstall.svg)
+
+## doAutoFIll 详细流程图
+
+![doAutoFIll 流程图](./doAutoFIll.svg)

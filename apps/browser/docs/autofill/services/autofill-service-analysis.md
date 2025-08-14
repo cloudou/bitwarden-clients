@@ -94,14 +94,14 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     Start([doAutoFill开始]) --> ValidateInput{验证输入参数}
-    ValidateInput -->|无效| ThrowError[抛出异常:<br/>"Nothing to autofill."]
+    ValidateInput -->|无效| ThrowError["抛出异常:<br/>Nothing to autofill."]
     ValidateInput -->|有效| CheckPremium[检查Premium权限]
 
     CheckPremium --> ProcessPages[遍历pageDetails]
 
     ProcessPages --> CheckTab{检查tab匹配}
     CheckTab -->|不匹配| SkipPage[跳过该页面]
-    CheckTab -->|匹配| GenerateScript[generateFillScript()]
+    CheckTab -->|匹配| GenerateScript["generateFillScript()"]
 
     GenerateScript --> CheckScript{脚本有效?}
     CheckScript -->|无| SkipPage
@@ -126,7 +126,7 @@ flowchart TD
 
     Continue --> CheckAutofilled{已自动填充?}
     CheckAutofilled -->|是| CollectEvent[收集事件统计]
-    CheckAutofilled -->|否| ThrowError2[抛出异常:<br/>"Did not autofill."]
+    CheckAutofilled -->|否| ThrowError2["抛出异常:<br/>Did not autofill."]
 
     CollectEvent --> ReturnTotp[返回TOTP码或null]
 

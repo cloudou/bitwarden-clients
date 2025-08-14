@@ -1,5 +1,14 @@
 # Bitwarden 内联菜单字段认证服务 - 综合分析
 
+## 图表类型说明
+
+本文档中的 Mermaid 图表分为以下几种类型：
+
+- **[代码实现图]** - 直接反映源代码中的实际逻辑和结构
+- **[概念架构图]** - 展示设计理念和整体架构，帮助理解但非直接代码映射
+- **[代码分析示例]** - 展示服务如何处理实际场景
+- **[概念设计图]** - 展示未来可能的设计方向
+
 ## 📋 概述
 
 `InlineMenuFieldQualificationService`是 Bitwarden 浏览器扩展自动填充系统的**智能字段分类引擎**。它对哪些表单字段应该显示内联菜单以及应该提供什么类型的凭据做出关键决策，直接影响数百万个 Web 表单的用户体验。
@@ -9,6 +18,8 @@
 ---
 
 ## 🏗️ 系统架构概览
+
+**[概念架构图]** - 展示服务在整体系统中的位置和作用
 
 ```mermaid
 graph TD
@@ -44,6 +55,8 @@ graph TD
 
 ### 1. 字段分析管道
 
+**[概念图 + 部分代码实现]** - WeakMap 缓存机制是实际存在的
+
 ```mermaid
 sequenceDiagram
     participant DOM as DOM Element
@@ -77,6 +90,8 @@ sequenceDiagram
 ```
 
 ### 2. 决策流程层级
+
+**[概念架构图]** - 展示字段认证的逻辑层次（代码中没有明确分层）
 
 ```mermaid
 graph TD
@@ -119,6 +134,8 @@ graph TD
 ## 🧩 组件交互
 
 ### 服务集成网络
+
+**[概念架构图]** - 展示服务间的关系（非直接代码调用）
 
 ```mermaid
 graph LR
@@ -188,26 +205,30 @@ graph LR
 
 ## 📊 方法分解和功能
 
-### 核心分类方法（共49个）
+### 核心分类方法
+
+该服务提供了多个公开方法用于字段分类，以及大量的私有辅助方法。
 
 #### **🔐 登录表单方法**
 
 ```typescript
 // High-Level Form Classification
-isFieldForLoginForm(field, pageDetails) → boolean
+isFieldForLoginForm(field: AutofillField, pageDetails: AutofillPageDetails) → boolean
 
 // Granular Field Type Detection
-isUsernameField(field, pageDetails) → boolean
-isCurrentPasswordField(field, pageDetails) → boolean
-isNewPasswordField(field, pageDetails) → boolean
-isTotpField(field) → boolean // Premium feature
+isUsernameField(field: AutofillField) → boolean
+isCurrentPasswordField(field: AutofillField) → boolean
+isNewPasswordField(field: AutofillField) → boolean
+isTotpField(field: AutofillField) → boolean // Premium feature
 
-// Context-Specific Analysis
-isUsernameFieldForLoginForm(field, pageDetails) → boolean // MOST COMPLEX
-isPasswordFieldForLoginForm(field, pageDetails) → boolean // SECOND MOST COMPLEX
+// Context-Specific Analysis (Private Methods)
+private isUsernameFieldForLoginForm(field: AutofillField, pageDetails: AutofillPageDetails) → boolean // MOST COMPLEX
+private isPasswordFieldForLoginForm(field: AutofillField, pageDetails: AutofillPageDetails) → boolean // SECOND MOST COMPLEX
 ```
 
 **最复杂方法分析**：`isUsernameFieldForLoginForm()`
+
+**[代码实现图]** - 精确映射实际方法的 if-else 逻辑（第455-565行）
 
 ```mermaid
 flowchart TD
@@ -252,34 +273,71 @@ flowchart TD
 #### **💳 信用卡方法**
 
 ```typescript
-isFieldForCreditCardForm(field, pageDetails) → boolean
-isFieldForCardNumber(field) → boolean
-isFieldForCardholderName(field) → boolean
-isFieldForCardExpirationDate(field) → boolean
-isFieldForCardExpirationMonth(field) → boolean
-isFieldForCardExpirationYear(field) → boolean
-isFieldForCardCvv(field) → boolean
+isFieldForCreditCardForm(field: AutofillField, pageDetails: AutofillPageDetails) → boolean
+isFieldForCardNumber = (field: AutofillField) → boolean
+isFieldForCardholderName = (field: AutofillField) → boolean
+isFieldForCardExpirationDate = (field: AutofillField) → boolean
+isFieldForCardExpirationMonth = (field: AutofillField) → boolean
+isFieldForCardExpirationYear = (field: AutofillField) → boolean
+isFieldForCardCvv = (field: AutofillField) → boolean
 ```
 
 #### **👤 身份信息方法**
 
 ```typescript
-isFieldForIdentityForm(field, pageDetails) → boolean
-isFieldForIdentityFirstName(field) → boolean
-isFieldForIdentityMiddleName(field) → boolean
-isFieldForIdentityLastName(field) → boolean
-isFieldForIdentityFullName(field) → boolean
-isFieldForIdentityAddress1(field) → boolean
-isFieldForIdentityEmail(field) → boolean
-// ... 15+ additional identity field methods
+isFieldForIdentityForm(field: AutofillField, pageDetails: AutofillPageDetails) → boolean
+isFieldForIdentityTitle = (field: AutofillField) → boolean
+isFieldForIdentityFirstName = (field: AutofillField) → boolean
+isFieldForIdentityMiddleName = (field: AutofillField) → boolean
+isFieldForIdentityLastName = (field: AutofillField) → boolean
+isFieldForIdentityFullName = (field: AutofillField) → boolean
+isFieldForIdentityAddress1 = (field: AutofillField) → boolean
+isFieldForIdentityAddress2 = (field: AutofillField) → boolean
+isFieldForIdentityAddress3 = (field: AutofillField) → boolean
+isFieldForIdentityCity = (field: AutofillField) → boolean
+isFieldForIdentityState = (field: AutofillField) → boolean
+isFieldForIdentityPostalCode = (field: AutofillField) → boolean
+isFieldForIdentityCountry = (field: AutofillField) → boolean
+isFieldForIdentityCompany = (field: AutofillField) → boolean
+isFieldForIdentityPhone = (field: AutofillField) → boolean
+isFieldForIdentityEmail = (field: AutofillField) → boolean
+isFieldForIdentityUsername = (field: AutofillField) → boolean
+```
+
+```typescript
+// Additional utility methods
+isEmailField = (field: AutofillField) → boolean
+isUpdateCurrentPasswordField = (field: AutofillField) → boolean
+
+// Private helper methods
+private isPasswordField = (field: AutofillField) → boolean
+private isLikePasswordField(field: AutofillField) → boolean
+private valueIsLikePassword(value: string) → boolean
 ```
 
 #### **🆕 账号创建方法**
 
 ```typescript
-isFieldForAccountCreationForm(field, pageDetails) → boolean
-isElementLoginSubmitButton(element, pageDetails) → boolean
-isElementChangePasswordSubmitButton(element, pageDetails) → boolean
+isFieldForAccountCreationForm(field: AutofillField, pageDetails: AutofillPageDetails) → boolean
+isElementLoginSubmitButton(element: HTMLElement) → boolean
+isElementChangePasswordSubmitButton(element: HTMLElement) → boolean
+```
+
+#### **🔧 私有辅助方法**
+
+```typescript
+// Field analysis helpers
+private isExcludedFieldType(field: AutofillField, excludedTypes: Set<string>): boolean
+private isSearchField(field: AutofillField): boolean
+private fieldHasDisqualifyingAttributeValue(field: AutofillField): boolean
+private isExplicitIdentityEmailField(field: AutofillField): boolean
+private isNewsletterForm(parentForm: any): boolean
+
+// Keyword processing
+private keywordsFoundInFieldData(autofillFieldData: AutofillField, keywords: string[], fuzzyMatchKeywords: boolean = true): boolean
+private getAutofillFieldDataKeywords(autofillFieldData: AutofillField, returnStringValue: boolean): string | Set<string>
+private fieldContainsAutocompleteValues(autofillFieldData: AutofillField, compareValues: string | Set<string>): boolean
+private getSubmitButtonKeywords(element: HTMLElement): string
 ```
 
 ---
@@ -287,6 +345,8 @@ isElementChangePasswordSubmitButton(element, pageDetails) → boolean
 ## ⚡ 复杂逻辑流程分析
 
 ### 多层验证策略
+
+**[概念架构图]** - 展示验证的逻辑层次（代码中这些检查是分散的）
 
 ```mermaid
 graph TD
@@ -332,44 +392,67 @@ graph TD
 
 ### 关键词处理管道
 
+**[代码实现]** - 基于实际的 `getAutofillFieldDataKeywords()` 方法
+
 该服务为字段分析实现了复杂的文本处理管道：
 
 ```typescript
-// Simplified version of getAutofillFieldDataKeywords()
-function processFieldKeywords(field: AutofillField): Set<string> {
-  // 1. Field Attribute Extraction (14 attributes)
-  const attributes = [
-    field.htmlID,
-    field.htmlName,
-    field.htmlClass,
-    field.placeholder,
-    field.ariaLabel,
-    field.ariaDescription,
-    field.dataLabel,
-    field.title,
-    field.tagName,
-    field.type,
-    field.formId,
-    field.form?.htmlID,
-    field.autoCompleteType,
-    field.selectInfo?.options,
-  ];
+// Actual implementation of getAutofillFieldDataKeywords()
+private getAutofillFieldDataKeywords(
+  autofillFieldData: AutofillField,
+  returnStringValue: boolean,
+) {
+  if (!this.autofillFieldKeywordsMap.has(autofillFieldData)) {
+    const keywords = [
+      autofillFieldData.htmlID,
+      autofillFieldData.htmlName,
+      autofillFieldData.htmlClass,
+      autofillFieldData.type,
+      autofillFieldData.title,
+      autofillFieldData.placeholder,
+      autofillFieldData.autoCompleteType,
+      autofillFieldData.dataSetValues,
+      autofillFieldData["label-data"],
+      autofillFieldData["label-aria"],
+      autofillFieldData["label-left"],
+      autofillFieldData["label-right"],
+      autofillFieldData["label-tag"],
+      autofillFieldData["label-top"],
+    ];
+    const keywordsSet = new Set<string>();
+    for (let i = 0; i < keywords.length; i++) {
+      if (keywords[i] && typeof keywords[i] === "string") {
+        let keywordEl = keywords[i].toLowerCase();
+        keywordsSet.add(keywordEl);
 
-  // 2. Text Normalization Pipeline
-  const processedText = attributes
-    .filter((attr) => attr) // Remove null/undefined
-    .join(" ")
-    .toLowerCase() // Case normalization
-    .replace(/-/g, "") // Hyphen removal
-    .match(/[\p{L}\d]+/gu) // Unicode-aware word splitting
-    ?.join(" ")
-    .replace(/\s+/g, " ") // Space collapse
-    .trim();
+        // Remove hyphens from all potential keywords
+        keywordEl = keywordEl.replace(/-/g, "");
 
-  // 3. Deduplication and Set Creation
-  const keywords = new Set(processedText?.split(" ") || []);
+        // Split by non-alphanumeric characters
+        keywordEl.split(/[^\p{L}\d]+/gu).forEach((keyword: string) => {
+          if (keyword) {
+            keywordsSet.add(keyword);
+          }
+        });
 
-  return keywords;
+        // Collapse spaces and split again
+        keywordEl
+          .replace(/\s/g, "")
+          .split(/[^\p{L}\d]+/gu)
+          .forEach((keyword: string) => {
+            if (keyword) {
+              keywordsSet.add(keyword);
+            }
+          });
+      }
+    }
+
+    const stringValue = Array.from(keywordsSet).join(",");
+    this.autofillFieldKeywordsMap.set(autofillFieldData, { keywordsSet, stringValue });
+  }
+
+  const mapValues = this.autofillFieldKeywordsMap.get(autofillFieldData);
+  return returnStringValue ? mapValues.stringValue : mapValues.keywordsSet;
 }
 ```
 
@@ -378,6 +461,8 @@ function processFieldKeywords(field: AutofillField): Set<string> {
 ## 🚀 性能和优化
 
 ### 缓存架构
+
+**[代码实现图]** - 基于实际的 WeakMap 实现
 
 ```mermaid
 graph LR
@@ -429,6 +514,8 @@ graph LR
 ## 🔒 安全和隐私架构
 
 ### 安全优先设计原则
+
+**[概念架构图]** - 展示安全验证的逻辑流程（非实际代码结构）
 
 ```mermaid
 graph TD
@@ -514,6 +601,8 @@ const USERNAME_KEYWORDS = [
 
 ### 依赖注入用法
 
+**[代码实现图]** - 基于实际的服务实例化和注入方式
+
 ```mermaid
 graph TD
     subgraph "Bootstrap Layer"
@@ -545,6 +634,22 @@ graph TD
     class SM,VPA angular
 ```
 
+### 服务初始化
+
+```typescript
+constructor() {
+  // Asynchronously fetch feature flags and premium status
+  void Promise.all([
+    sendExtensionMessage("getInlineMenuFieldQualificationFeatureFlag"),
+    sendExtensionMessage("getUserPremiumStatus"),
+  ]).then(([fieldQualificationFlag, premiumStatus]) => {
+    this.premiumEnabled = !!premiumStatus?.result;
+  });
+}
+```
+
+该服务在构造时会异步获取用户的高级功能状态，以确定是否启用TOTP字段检测等高级功能。
+
 ### 框架无关设计
 
 尽管在Angular上下文中使用，该服务**零Angular依赖**，使其具有：
@@ -559,6 +664,8 @@ graph TD
 ## 📈 使用模式和示例
 
 ### 真实世界认证示例
+
+**[代码分析示例]** - 展示服务如何处理实际的 HTML 表单
 
 #### 示例1：登录表单检测
 
@@ -617,16 +724,18 @@ const cardField: AutofillField = {
 
 ### 已识别限制
 
-| **限制**           | **影响**             | **复杂度** |
-| ------------------ | -------------------- | ---------- |
-| **静态关键词列表** | 新表单模式无法识别   | 中等       |
-| **单语言上下文**   | 无运行时语言检测     | 低         |
-| **基于规则的逻辑** | 无法适应新模式       | 高         |
-| **有限的ML集成**   | 无法从用户行为中学习 | 高         |
+| **限制**           | **影响**               | **复杂度** |
+| ------------------ | ---------------------- | ---------- |
+| **静态关键词列表** | 新表单模式无法识别     | 中等       |
+| **单语言上下文**   | 需要预定义多语言关键词 | 低         |
+| **基于规则的逻辑** | 无法适应新模式         | 高         |
+| **有限的灵活性**   | 难以处理动态表单       | 高         |
 
 ### 未来增强机会
 
 #### 1. 机器学习集成
+
+**[概念设计图]** - 展示未来可能的 ML 增强方向
 
 ```mermaid
 graph LR
@@ -717,30 +826,29 @@ pie title Field Qualification Accuracy Impact
 ### 调试辅助方法
 
 ```typescript
-// Debugging utilities (hypothetical)
-class DebugQualificationService {
-  debugFieldQualification(field: AutofillField, pageDetails: AutofillPageDetails) {
-    const keywords = this.getAutofillFieldDataKeywords(field, true);
-    const loginCheck = this.isFieldForLoginForm(field, pageDetails);
-    const cardCheck = this.isFieldForCreditCardForm(field, pageDetails);
+// Debug approach using actual service methods
+// To debug field qualification, you would:
+// 1. Create an instance of InlineMenuFieldQualificationService
+// 2. Call the public methods with test data:
 
-    return {
-      keywords,
-      classifications: {
-        login: loginCheck,
-        creditCard: cardCheck,
-        identity: this.isFieldForIdentityForm(field, pageDetails),
-        accountCreation: this.isFieldForAccountCreationForm(field, pageDetails),
-      },
-      fieldMeta: {
-        type: field.type,
-        autocomplete: field.autoCompleteType,
-        visible: field.viewable,
-        name: field.htmlName,
-      },
-    };
-  }
-}
+const service = new InlineMenuFieldQualificationService();
+const field: AutofillField = {
+  /* field data */
+};
+const pageDetails: AutofillPageDetails = {
+  /* page data */
+};
+
+// Test classifications
+const isLogin = service.isFieldForLoginForm(field, pageDetails);
+const isCard = service.isFieldForCreditCardForm(field, pageDetails);
+const isIdentity = service.isFieldForIdentityForm(field, pageDetails);
+const isAccountCreation = service.isFieldForAccountCreationForm(field, pageDetails);
+
+// Check specific field types
+const isUsername = service.isUsernameField(field);
+const isPassword = service.isCurrentPasswordField(field);
+const isTotp = service.isTotpField(field);
 ```
 
 ---

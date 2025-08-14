@@ -305,6 +305,7 @@ async getPageDetails(): Promise<AutofillPageDetails> {
 ```
 
 主要后续方法职责：
+
 - `setupMutationObserver`：在 `document.documentElement` 上监听 attributes/childList/subtree，进入 `handleMutationObserverMutation`（队列 + 空闲回调 + 防抖），在变动末端调用 `updateAutofillElementsAfterMutation` 以空闲回调再次触发 `getPageDetails` 增量重建。
 - `setupIntersectionObserver` 与 `handleFormElementIntersection`：对不可见字段在进入视口时设为可见并挂载覆盖层监听。
 - `queryAutofillFormAndFieldElements`：统一收集 `form` + 字段（`input/textarea/select`，以及 `span[data-bwautofill]`）。
@@ -454,7 +455,6 @@ this.mutationObserver.observe(document.documentElement, {
 
 综上：`data-bwautofill` 是一种页面侧的“参与扫描”的显式信号；扩展在识别与上下文层面消费它，但通过 `elementIsFillableFormField` 严格区分“可填写控件”与“伪字段”，确保输入、填充与菜单交互的正确性与安全性。
 
-
 ## 核心数据流
 
 ```mermaid
@@ -523,7 +523,12 @@ export class CollectAutofillContentService {
   private readonly formFieldQueryString;
   private readonly nonInputFormFieldTags = new Set(["textarea", "select"]);
   private readonly ignoredInputTypes = new Set([
-    "hidden", "submit", "reset", "button", "image", "file"
+    "hidden",
+    "submit",
+    "reset",
+    "button",
+    "image",
+    "file",
   ]);
 }
 ```
@@ -811,8 +816,8 @@ this.intersectionObserver?.unobserve(entry.target);
 ```
 
 使用场景举例：
-- 页面初次加载时，折叠面板内的输入框被扫描到但不可见。该元素会被加入 `elementInitializingIntersectionObserver` 并被 `observe`；随即触发的首次回调会被忽略。待用户展开面板或滚动后，元素再次触发回调，此时才检查为可见并挂载覆盖层监听。
 
+- 页面初次加载时，折叠面板内的输入框被扫描到但不可见。该元素会被加入 `elementInitializingIntersectionObserver` 并被 `observe`；随即触发的首次回调会被忽略。待用户展开面板或滚动后，元素再次触发回调，此时才检查为可见并挂载覆盖层监听。
 
 ## 复杂和难懂的部分
 
@@ -1033,7 +1038,7 @@ const autofillFieldElements = this.getAutofillFieldElements(100, formFieldElemen
 
 // 优先处理重要字段
 if (priorityFormFields.length >= fieldsLimit) {
-  return priorityFormFields;  // 提前返回
+  return priorityFormFields; // 提前返回
 }
 ```
 
@@ -1165,7 +1170,7 @@ if (!this.domQueryService.pageContainsShadowDomElements()) {
 // 性能监控点
 requestIdleCallbackPolyfill(
   debounce(this.processMutations, 100),
-  { timeout: 500 }  // 记录超时情况
+  { timeout: 500 }, // 记录超时情况
 );
 ```
 
@@ -1196,6 +1201,7 @@ graph TB
 CollectAutofillContentService 是一个高度复杂的服务，具有以下特点：
 
 ### 核心特性
+
 1. **深度DOM扫描**：支持Shadow DOM，递归遍历所有可能的表单元素
 2. **智能缓存**：多级缓存机制，避免重复扫描
 3. **实时监听**：MutationObserver和IntersectionObserver双重监听
@@ -1203,6 +1209,7 @@ CollectAutofillContentService 是一个高度复杂的服务，具有以下特�
 5. **全面的数据收集**：收集字段的所有相关属性和上下文信息
 
 ### 技术挑战
+
 1. **Shadow DOM处理**：需要特殊的遍历策略
 2. **动态内容**：实时响应DOM变化
 3. **性能平衡**：在完整性和性能之间取得平衡
@@ -1210,6 +1217,7 @@ CollectAutofillContentService 是一个高度复杂的服务，具有以下特�
 5. **可见性检测**：准确判断元素是否可见
 
 ### 最佳实践
+
 1. 使用Map缓存元素引用，快速查找
 2. 延迟处理非关键更新
 3. 优先处理重要字段类型
@@ -1218,23 +1226,23 @@ CollectAutofillContentService 是一个高度复杂的服务，具有以下特�
 
 这个服务是整个自动填充系统的数据基础，其准确性和性能直接影响用户体验。
 
-
 ### 覆盖层监听的作用流程
 
 为什么要设置覆盖层监听？
 
-  设置覆盖层监听的主要目的是为了实现内联菜单（Inline Menu）功能。当字段不为空（即页面上存在可填充的表单字段）时，系统需要：
-  1. 监听用户交互：检测用户何时聚焦、点击或输入表单字段
-  2. 显示内联菜单：在合适的时机展示自动填充选项
-  3. 收集用户输入：跟踪用户在字段中输入的内容，以便创建新的凭据
-  4. 管理菜单位置：根据字段位置动态调整内联菜单的显示位置
+设置覆盖层监听的主要目的是为了实现内联菜单（Inline Menu）功能。当字段不为空（即页面上存在可填充的表单字段）时，系统需要：
 
-  具体的设置覆盖层代码
+1. 监听用户交互：检测用户何时聚焦、点击或输入表单字段
+2. 显示内联菜单：在合适的时机展示自动填充选项
+3. 收集用户输入：跟踪用户在字段中输入的内容，以便创建新的凭据
+4. 管理菜单位置：根据字段位置动态调整内联菜单的显示位置
 
+具体的设置覆盖层代码
 
-  1. **入口点 - CollectAutofillContentService**
+1. **入口点 - CollectAutofillContentService**
 
-  文件：src/autofill/services/collect-autofill-content.service.ts
+文件：src/autofill/services/collect-autofill-content.service.ts
+
 ```typescript
      1 │ // 第122-123行：在收集完页面详情后设置覆盖层监听
      2 │ private async getPageDetails(): Promise<AutofillPageDetails> {
@@ -1272,9 +1280,10 @@ CollectAutofillContentService 是一个高度复杂的服务，具有以下特�
     34 │ }
 ```
 
-  2. **核心实现 - AutofillOverlayContentService**
+2. **核心实现 - AutofillOverlayContentService**
 
-  文件：src/autofill/services/autofill-overlay-content.service.ts
+文件：src/autofill/services/autofill-overlay-content.service.ts
+
 ```typescript
      1 │ // 第196-214行：设置覆盖层监听的主方法
      2 │ async setupOverlayListeners(
@@ -1328,7 +1337,7 @@ CollectAutofillContentService 是一个高度复杂的服务，具有以下特�
     50 │ }
 ```
 
-  3. **事件监听器设置**
+3. **事件监听器设置**
 
 ```typescript
      1 │ // 第359-381行：设置各种事件监听器
@@ -1360,7 +1369,7 @@ CollectAutofillContentService 是一个高度复杂的服务，具有以下特�
     27 │ }
 ```
 
-  4. **聚焦时触发的核心动作**
+4. **聚焦时触发的核心动作**
 
 ```typescript
      1 │ // 第900-922行：字段聚焦时的处理
@@ -1396,7 +1405,6 @@ CollectAutofillContentService 是一个高度复杂的服务，具有以下特�
     31 │   await this.sendExtensionMessage("openAutofillInlineMenu");
     32 │ }
 ```
-
 
 ```mermaid
  sequenceDiagram

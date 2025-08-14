@@ -21,4 +21,4 @@ The Bitwarden browser extension is written using the Web Extension API and Angul
 
 Please refer to the [Browser section](https://contributing.bitwarden.com/getting-started/clients/browser/) of the [Contributing Documentation](https://contributing.bitwarden.com/) for build instructions, recommended tooling, code style tips, and lots of other great information to get you started.
 
-深入分析 src/autofill/services/autofill-overlay-content.service.ts，总结主要流程是怎样的，和哪些组件有交互，有没有复杂、难懂的部分呢，在docs目录创建新的md文档，可视化的、详细的、真实的反应 src/autofill/services/autofill-overlay-content.service.ts 的功能点，需要使用中文输出
+深入分析 src/autofill/overlay/inline-menu/content/autofill-inline-menu-content.service.ts，总结主要流程是怎样的，和哪些组件有交互，有没有复杂、难懂的部分，可以参考 docs/inline-menu-field-qualification-service-analysis.md 的格式，在docs目录创建新的md文档，可视化的、详细的、真实的反应 src/autofill/overlay/inline-menu/content/autofill-inline-menu-content.service.ts 的功能点，需要使用中文输出，在生成完md文档后，需要严格的依据源代码审核一遍，确保文档内容真实、准确的反应源代码。

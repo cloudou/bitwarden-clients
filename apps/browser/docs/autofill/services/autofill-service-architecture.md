@@ -81,20 +81,20 @@ graph TB
 ```typescript
 // src/background/main.background.ts:1042-1057
 this.autofillService = new AutofillService(
-  this.cipherService,           // 密码库服务
-  this.autofillSettingsService,  // 自动填充设置
-  this.totpService,              // TOTP 服务
-  this.eventCollectionService,   // 事件收集
-  this.logService,               // 日志服务
-  this.domainSettingsService,    // 域名设置
-  this.userVerificationService,  // 用户验证
+  this.cipherService, // 密码库服务
+  this.autofillSettingsService, // 自动填充设置
+  this.totpService, // TOTP 服务
+  this.eventCollectionService, // 事件收集
+  this.logService, // 日志服务
+  this.domainSettingsService, // 域名设置
+  this.userVerificationService, // 用户验证
   this.billingAccountProfileStateService, // 账户状态
-  this.scriptInjectorService,    // 脚本注入
-  this.accountService,           // 账户服务
-  this.authService,              // 认证服务
-  this.configService,            // 配置服务
+  this.scriptInjectorService, // 脚本注入
+  this.accountService, // 账户服务
+  this.authService, // 认证服务
+  this.configService, // 配置服务
   this.userNotificationSettingsService, // 通知设置
-  messageListener,               // 消息监听器
+  messageListener, // 消息监听器
 );
 ```
 
@@ -789,27 +789,27 @@ flowchart TB
 ```mermaid
 flowchart TB
     START[页面加载] --> CHECK_USER{用户已登录?}
-    
+
     CHECK_USER -->|否| BASIC[仅加载基础脚本]
     CHECK_USER -->|是| CHECK_UNLOCK{账户已解锁?}
-    
+
     CHECK_UNLOCK -->|否| BASIC
     CHECK_UNLOCK -->|是| CHECK_SETTINGS[检查用户设置]
-    
+
     CHECK_SETTINGS --> INLINE{内联菜单启用?}
     CHECK_SETTINGS --> NOTIF{通知栏启用?}
     CHECK_SETTINGS --> AUTO{自动填充启用?}
-    
+
     INLINE -->|是| LOAD_MENU[加载内联菜单脚本]
     NOTIF -->|是| LOAD_NOTIF[加载通知脚本]
     AUTO -->|是| LOAD_AUTO[加载自动填充脚本]
-    
+
     LOAD_MENU --> SELECT[选择合适的脚本组合]
     LOAD_NOTIF --> SELECT
     LOAD_AUTO --> SELECT
-    
+
     SELECT --> INJECT[动态注入]
-    
+
     style SELECT fill:#ff9999
 ```
 
@@ -819,10 +819,19 @@ flowchart TB
 
 ```javascript
 // 根据用户设置和状态选择
-- bootstrap-autofill.js                      // 基础版本（无内联菜单、无通知）
-- bootstrap-autofill-overlay-notifications.js // 仅通知栏
-- bootstrap-autofill-overlay-menu.js         // 仅内联菜单
-- bootstrap-autofill-overlay.js              // 完整版本（内联菜单 + 通知）
+-bootstrap -
+  autofill.js - // 基础版本（无内联菜单、无通知）
+  bootstrap -
+  autofill -
+  overlay -
+  notifications.js - // 仅通知栏
+  bootstrap -
+  autofill -
+  overlay -
+  menu.js - // 仅内联菜单
+  bootstrap -
+  autofill -
+  overlay.js; // 完整版本（内联菜单 + 通知）
 ```
 
 #### 3. 动态重载能力
@@ -836,22 +845,22 @@ sequenceDiagram
     participant AS as AutofillService
     participant PORTS as Port连接
     participant TABS as 所有标签页
-    
+
     USER->>SETTINGS: 更改内联菜单设置
     SETTINGS->>AS: 触发设置变化事件
-    
+
     AS->>AS: handleInlineMenuVisibilitySettingsChange()
     AS->>AS: reloadAutofillScripts()
-    
+
     AS->>PORTS: 断开所有现有连接
     loop 每个Port
         PORTS->>PORTS: port.disconnect()
         PORTS->>AS: 从Set中删除
     end
-    
+
     AS->>TABS: injectAutofillScriptsInAllTabs()
     TABS->>TABS: 注入新的脚本组合
-    
+
     Note over AS,TABS: 无需刷新页面即可更新功能
 ```
 
@@ -859,12 +868,12 @@ sequenceDiagram
 
 如果在 manifest.json 中静态配置所有脚本，会面临以下问题：
 
-| 问题 | 影响 | 动态注入如何解决 |
-|-----|------|-----------------|
-| **无法条件加载** | 所有脚本都会在每个页面加载 | 根据用户状态和设置选择性加载 |
-| **性能浪费** | 未登录用户也会加载所有功能 | 仅在需要时加载相应功能 |
-| **内存占用** | 不需要的功能也会占用内存 | 按需加载，减少内存使用 |
-| **无法动态切换** | 用户更改设置需要刷新页面 | 实时响应设置变化 |
+| 问题             | 影响                            | 动态注入如何解决                  |
+| ---------------- | ------------------------------- | --------------------------------- |
+| **无法条件加载** | 所有脚本都会在每个页面加载      | 根据用户状态和设置选择性加载      |
+| **性能浪费**     | 未登录用户也会加载所有功能      | 仅在需要时加载相应功能            |
+| **内存占用**     | 不需要的功能也会占用内存        | 按需加载，减少内存使用            |
+| **无法动态切换** | 用户更改设置需要刷新页面        | 实时响应设置变化                  |
 | **版本控制困难** | 不同功能组合需要不同的 manifest | 统一的 manifest，灵活的运行时控制 |
 
 #### 5. 性能和安全优势
@@ -878,7 +887,7 @@ graph TB
         S4[性能和内存浪费]
         S5[无法跳过特殊页面]
     end
-    
+
     subgraph "动态注入的优势"
         D1[按需加载脚本]
         D2[根据用户状态优化]
@@ -888,13 +897,13 @@ graph TB
         D6[支持功能标志]
         D7[可跳过扩展自身页面]
     end
-    
+
     S1 -.->|解决| D1
     S2 -.->|解决| D2
     S3 -.->|解决| D3
     S4 -.->|解决| D4
     S5 -.->|解决| D7
-    
+
     style D1 fill:#90EE90
     style D2 fill:#90EE90
     style D3 fill:#90EE90
@@ -911,7 +920,7 @@ private async getBootstrapAutofillContentScript(
 ): Promise<string> {
   // 检查内联菜单设置
   const inlineMenuVisibility = await this.getInlineMenuVisibility();
-  
+
   // 检查通知设置
   const enableChangedPasswordPrompt = await firstValueFrom(
     this.userNotificationSettingsService.enableChangedPasswordPrompt$
@@ -919,7 +928,7 @@ private async getBootstrapAutofillContentScript(
   const enableAddedLoginPrompt = await firstValueFrom(
     this.userNotificationSettingsService.enableAddedLoginPrompt$
   );
-  
+
   // 根据功能组合选择合适的脚本
   if (!inlineMenuVisibility && !isNotificationBarEnabled) {
     return "bootstrap-autofill.js";  // 最小化版本
@@ -951,6 +960,7 @@ private async getBootstrapAutofillContentScript(
 AutofillService 是一个高度复杂的系统，具有以下特点：
 
 ### 核心特性
+
 1. **多层架构**: Content Scripts、Background Service、UI 组件协同工作
 2. **智能匹配**: 复杂的字段识别和匹配算法
 3. **安全机制**: 密码重提示、不受信任内容处理
@@ -959,6 +969,7 @@ AutofillService 是一个高度复杂的系统，具有以下特点：
 6. **动态注入**: 智能的脚本加载策略，按需提供功能
 
 ### 技术挑战
+
 1. **跨框架通信**: 处理多个iframe的协调
 2. **动态内容**: 应对SPA和动态加载的表单
 3. **兼容性**: 支持各种网站和表单结构
@@ -967,6 +978,7 @@ AutofillService 是一个高度复杂的系统，具有以下特点：
 6. **条件加载**: 根据用户状态和设置动态调整功能
 
 ### 最佳实践
+
 1. 使用 Observable 模式处理异步消息
 2. 实现完善的错误处理和降级策略
 3. 采用防抖和节流优化性能

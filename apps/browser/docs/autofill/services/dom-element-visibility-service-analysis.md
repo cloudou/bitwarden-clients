@@ -3,7 +3,9 @@
 > 文件：`src/autofill/services/dom-element-visibility.service.ts`
 
 #### 概述
+
 `DomElementVisibilityService` 用于判定页面上的 DOM 元素是否“可见/可视（viewable）”。它综合考虑：
+
 - 视口边界（尺寸和是否溢出可见区域）
 - CSS 隐藏（opacity/display/visibility/clip-path 以及父元素透明度）
 - 遮挡情况（元素中心点是否被其它元素覆盖；对内联菜单元素与关联 label 做放行）
@@ -13,6 +15,7 @@
 ---
 
 #### 接口定义（Interface）
+
 ```ts 1:4:src/autofill/services/abstractions/dom-element-visibility.service.ts
 export interface DomElementVisibilityService {
   isElementViewable: (element: HTMLElement) => Promise<boolean>;
@@ -23,12 +26,15 @@ export interface DomElementVisibilityService {
 ---
 
 #### 构造函数
+
 ```ts
 constructor(private inlineMenuContentService?: AutofillInlineMenuContentService) {}
 ```
+
 - 可选注入 `inlineMenuContentService`，用于在遮挡判定中识别内联菜单（允许覆盖但不视为遮挡）。
 
 源码：
+
 ```ts 8:12:src/autofill/services/dom-element-visibility.service.ts
 class DomElementVisibilityService implements DomElementVisibilityServiceInterface {
   private cachedComputedStyle: CSSStyleDeclaration | null = null;
@@ -43,13 +49,14 @@ class DomElementVisibilityService implements DomElementVisibilityServiceInterfac
 - `async isElementViewable(element: HTMLElement): Promise<boolean>`
   - 功能：判定元素是否对用户“可视”。
   - 判定流程：
-    1) 计算元素 `getBoundingClientRect()`；
-    2) 若超出视口边界或尺寸过小（`isElementOutsideViewportBounds`）→ 不可视；
-    3) 若被 CSS 隐藏（`isElementHiddenByCss`）→ 不可视；
-    4) 最后检查中心点是否被其它元素遮挡（`formFieldIsNotHiddenBehindAnotherElement`）→ 返回最终可视性。
+    1. 计算元素 `getBoundingClientRect()`；
+    2. 若超出视口边界或尺寸过小（`isElementOutsideViewportBounds`）→ 不可视；
+    3. 若被 CSS 隐藏（`isElementHiddenByCss`）→ 不可视；
+    4. 最后检查中心点是否被其它元素遮挡（`formFieldIsNotHiddenBehindAnotherElement`）→ 返回最终可视性。
   - 适用场景：表单字段是否应展示内联菜单、是否可被交互或作为候选目标等。
 
 源码：
+
 ```ts 18:28:src/autofill/services/dom-element-visibility.service.ts
 async isElementViewable(element: HTMLElement): Promise<boolean> {
   const elementBoundingClientRect = element.getBoundingClientRect();
@@ -75,6 +82,7 @@ async isElementViewable(element: HTMLElement): Promise<boolean> {
   - 性能：在单元素的检查链路内使用 `cachedComputedStyle` 缓存，避免重复 `getComputedStyle`。
 
 源码：
+
 ```ts 38:61:src/autofill/services/dom-element-visibility.service.ts
 isElementHiddenByCss(element: HTMLElement): boolean {
   this.cachedComputedStyle = null;
@@ -110,6 +118,7 @@ isElementHiddenByCss(element: HTMLElement): boolean {
   - 获取并缓存当前元素的 `computedStyle`，随后读取指定属性值。
 
 源码：
+
 ```ts 71:79:src/autofill/services/dom-element-visibility.service.ts
 private getElementStyle(element: HTMLElement, styleProperty: string): string {
   if (!this.cachedComputedStyle) {
@@ -126,6 +135,7 @@ private getElementStyle(element: HTMLElement, styleProperty: string): string {
   - `opacity < 0.1` 视作不可见；选取 0.1 阈值以规避亚像素/动画闪烁等。
 
 源码：
+
 ```ts 87:89:src/autofill/services/dom-element-visibility.service.ts
 private isElementInvisible(element: HTMLElement): boolean {
   return parseFloat(this.getElementStyle(element, "opacity")) < 0.1;
@@ -136,6 +146,7 @@ private isElementInvisible(element: HTMLElement): boolean {
   - `display === "none"`。
 
 源码：
+
 ```ts 97:99:src/autofill/services/dom-element-visibility.service.ts
 private isElementNotDisplayed(element: HTMLElement): boolean {
   return this.getElementStyle(element, "display") === "none";
@@ -146,6 +157,7 @@ private isElementNotDisplayed(element: HTMLElement): boolean {
   - `visibility ∈ {hidden, collapse}`。
 
 源码：
+
 ```ts 107:109:src/autofill/services/dom-element-visibility.service.ts
 private isElementNotVisible(element: HTMLElement): boolean {
   return new Set(["hidden", "collapse"]).has(this.getElementStyle(element, "visibility"));
@@ -156,6 +168,7 @@ private isElementNotVisible(element: HTMLElement): boolean {
   - `clip-path` 为一组典型“完全裁剪”形态（如 `inset(100%)`, `circle(0)`, 全 0 多边形等）视为隐藏。
 
 源码：
+
 ```ts 117:127:src/autofill/services/dom-element-visibility.service.ts
 private isElementClipped(element: HTMLElement): boolean {
   return new Set([
@@ -177,6 +190,7 @@ private isElementClipped(element: HTMLElement): boolean {
   - 返回任一条件命中即为“超出视口边界（不可视）”。
 
 源码：
+
 ```ts 137:165:src/autofill/services/dom-element-visibility.service.ts
 private isElementOutsideViewportBounds(
   targetElement: HTMLElement,
@@ -218,6 +232,7 @@ private isElementOutsideViewportBounds(
   - 兼容 Shadow DOM：若在 ShadowRoot 内，从 root 调用 `elementFromPoint`。
 
 源码：
+
 ```ts 176:206:src/autofill/services/dom-element-visibility.service.ts
 private formFieldIsNotHiddenBehindAnotherElement(
   targetElement: FormFieldElement,
@@ -261,6 +276,7 @@ private formFieldIsNotHiddenBehindAnotherElement(
 - `isElementViewable(element)`
   - `src/autofill/services/collect-autofill-content.service.ts`
     - `updateCachedAutofillFieldVisibility()` 调用：
+
       ```ts 198:206:src/autofill/services/collect-autofill-content.service.ts
       private updateCachedAutofillFieldVisibility() {
         this.autofillFieldElements.forEach(async (autofillField, element) => {
@@ -273,6 +289,7 @@ private formFieldIsNotHiddenBehindAnotherElement(
         });
       }
       ```
+
     - `buildAutofillFieldItem(...)` 调用：
       ```ts 362:370:src/autofill/services/collect-autofill-content.service.ts
       const autofillFieldBase = {
@@ -286,6 +303,7 @@ private formFieldIsNotHiddenBehindAnotherElement(
       };
       ```
     - `handleFormElementIntersection(...)` 调用：
+
       ```ts 1351:1364:src/autofill/services/collect-autofill-content.service.ts
       const cachedAutofillFieldElement = this.autofillFieldElements.get(formFieldElement);
       if (!cachedAutofillFieldElement) {
@@ -301,6 +319,7 @@ private formFieldIsNotHiddenBehindAnotherElement(
       cachedAutofillFieldElement.viewable = true;
       this.setupOverlayOnField(formFieldElement, cachedAutofillFieldElement);
       ```
+
   - `src/autofill/services/autofill-overlay-content.service.ts`
     - `querySubmitButtonElement(...)` 调用：
       ```ts 555:562:src/autofill/services/autofill-overlay-content.service.ts
@@ -318,6 +337,7 @@ private formFieldIsNotHiddenBehindAnotherElement(
 - `isElementHiddenByCss(element)`
   - `src/autofill/services/insert-autofill-content.service.ts`
     - `triggerFillAnimationOnElement(...)` 调用：
+
       ```ts 277:284:src/autofill/services/insert-autofill-content.service.ts
       private triggerFillAnimationOnElement(element: FormFieldElement): void {
         const skipAnimatingElement =
@@ -333,8 +353,10 @@ private formFieldIsNotHiddenBehindAnotherElement(
 ---
 
 #### 相关上下游（构造与注入示例，仅供参考）
+
 - 在启动脚本中实例化并注入：
   - `src/autofill/content/bootstrap-autofill.ts`
+
     ```ts 1:19:src/autofill/content/bootstrap-autofill.ts
     import DomElementVisibilityService from "../services/dom-element-visibility.service";
     // ... 省略若干导入
@@ -352,7 +374,9 @@ private formFieldIsNotHiddenBehindAnotherElement(
       }
     })(window);
     ```
+
   - `src/autofill/content/bootstrap-autofill-overlay.ts`
+
     ```ts 13:38:src/autofill/content/bootstrap-autofill-overlay.ts
     (function (windowContext) {
       if (!windowContext.bitwardenAutofillInit) {
@@ -364,7 +388,9 @@ private formFieldIsNotHiddenBehindAnotherElement(
         }
 
         const domQueryService = new DomQueryService();
-        const domElementVisibilityService = new DomElementVisibilityService(inlineMenuContentService);
+        const domElementVisibilityService = new DomElementVisibilityService(
+          inlineMenuContentService,
+        );
         const inlineMenuFieldQualificationService = new InlineMenuFieldQualificationService();
         const autofillOverlayContentService = new AutofillOverlayContentService(
           domQueryService,
@@ -386,6 +412,7 @@ private formFieldIsNotHiddenBehindAnotherElement(
       }
     })(window);
     ```
+
 - 作为依赖被以下服务使用：
   - `CollectAutofillContentService`（收集页面与字段）
   - `AutofillOverlayContentService`（内联菜单/覆盖层逻辑）

@@ -565,3 +565,242 @@ return merge(sharedPageDetailsFromTab$, pageDetailsFallback$, pageDetailsTimeout
 ## doAutoFIll 详细流程图
 
 ![doAutoFIll 流程图](./doAutoFIll.svg)
+
+## 7. fillScript 数据结构详解
+
+### 7.1 AutofillScript 类定义
+
+`fillScript` 是 `AutofillScript` 类的实例，包含了所有自动填充所需的信息和指令。
+
+```typescript
+class AutofillScript {
+  script: FillScript[] = []; // 核心：填充动作序列
+  properties: AutofillScriptProperties = {}; // 执行属性配置
+  metadata: any = {}; // 元数据（当前未使用）
+  autosubmit: string[]; // 自动提交的表单ID列表
+  savedUrls: string[]; // 保存的URL列表
+  untrustedIframe: boolean; // 是否在不受信任的iframe中
+  itemType: string; // 项目类型（当前未使用）
+}
+```
+
+### 7.2 核心数据结构
+
+#### 7.2.1 FillScript（填充动作）
+
+```typescript
+type FillScript = [action: FillScriptActions, opid: string, value?: string];
+
+type FillScriptActions =
+  | "click_on_opid" // 点击字段
+  | "focus_by_opid" // 聚焦字段
+  | "fill_by_opid"; // 填充字段值
+```
+
+每个填充动作是一个数组，包含：
+
+- **action**: 动作类型
+- **opid**: 目标字段的唯一标识符
+- **value**: 要填充的值（仅用于 fill_by_opid）
+
+#### 7.2.2 AutofillScriptProperties（执行属性）
+
+```typescript
+type AutofillScriptProperties = {
+  delay_between_operations?: number; // 操作间延迟（毫秒）
+};
+```
+
+### 7.3 真实数据示例
+
+#### 7.3.1 登录表单填充脚本
+
+```javascript
+// 一个典型的登录表单填充脚本
+const loginFillScript = {
+  script: [
+    // 用户名字段
+    ["click_on_opid", "username_field_12345"],
+    ["focus_by_opid", "username_field_12345"],
+    ["fill_by_opid", "username_field_12345", "john.doe@example.com"],
+
+    // 密码字段
+    ["click_on_opid", "password_field_67890"],
+    ["focus_by_opid", "password_field_67890"],
+    ["fill_by_opid", "password_field_67890", "SecurePassword123!"],
+
+    // TOTP字段（如果存在）
+    ["click_on_opid", "totp_field_24680"],
+    ["focus_by_opid", "totp_field_24680"],
+    ["fill_by_opid", "totp_field_24680", "123456"],
+
+    // 最后聚焦到密码字段（用户可以直接按回车提交）
+    ["focus_by_opid", "password_field_67890"],
+  ],
+
+  properties: {
+    delay_between_operations: 20, // 每个操作之间延迟20毫秒
+  },
+
+  savedUrls: ["https://example.com/login", "https://example.com/*"],
+
+  untrustedIframe: false, // 在主页面中，不是iframe
+
+  autosubmit: ["form_login_form"], // 自动提交表单ID
+};
+```
+
+#### 7.3.2 信用卡表单填充脚本
+
+```javascript
+const cardFillScript = {
+  script: [
+    // 持卡人姓名
+    ["click_on_opid", "cardholder_name_11111"],
+    ["focus_by_opid", "cardholder_name_11111"],
+    ["fill_by_opid", "cardholder_name_11111", "John Doe"],
+
+    // 卡号
+    ["click_on_opid", "card_number_22222"],
+    ["focus_by_opid", "card_number_22222"],
+    ["fill_by_opid", "card_number_22222", "4111111111111111"],
+
+    // 有效期月份
+    ["click_on_opid", "exp_month_33333"],
+    ["focus_by_opid", "exp_month_33333"],
+    ["fill_by_opid", "exp_month_33333", "12"],
+
+    // 有效期年份
+    ["click_on_opid", "exp_year_44444"],
+    ["focus_by_opid", "exp_year_44444"],
+    ["fill_by_opid", "exp_year_44444", "2025"],
+
+    // CVV
+    ["click_on_opid", "cvv_55555"],
+    ["focus_by_opid", "cvv_55555"],
+    ["fill_by_opid", "cvv_55555", "123"],
+  ],
+
+  properties: {
+    delay_between_operations: 20,
+  },
+
+  savedUrls: ["https://shop.example.com/checkout"],
+  untrustedIframe: false,
+  autosubmit: [], // 通常不自动提交支付表单
+};
+```
+
+#### 7.3.3 多步骤TOTP填充（分离的验证码输入框）
+
+```javascript
+// 6个独立的输入框，每个填充一位数字
+const totpSeparateFillScript = {
+  script: [
+    ["click_on_opid", "totp_digit_1"],
+    ["focus_by_opid", "totp_digit_1"],
+    ["fill_by_opid", "totp_digit_1", "1"],
+
+    ["click_on_opid", "totp_digit_2"],
+    ["focus_by_opid", "totp_digit_2"],
+    ["fill_by_opid", "totp_digit_2", "2"],
+
+    ["click_on_opid", "totp_digit_3"],
+    ["focus_by_opid", "totp_digit_3"],
+    ["fill_by_opid", "totp_digit_3", "3"],
+
+    ["click_on_opid", "totp_digit_4"],
+    ["focus_by_opid", "totp_digit_4"],
+    ["fill_by_opid", "totp_digit_4", "4"],
+
+    ["click_on_opid", "totp_digit_5"],
+    ["focus_by_opid", "totp_digit_5"],
+    ["fill_by_opid", "totp_digit_5", "5"],
+
+    ["click_on_opid", "totp_digit_6"],
+    ["focus_by_opid", "totp_digit_6"],
+    ["fill_by_opid", "totp_digit_6", "6"],
+  ],
+
+  properties: {
+    delay_between_operations: 20,
+  },
+
+  savedUrls: ["https://example.com/verify"],
+  untrustedIframe: false,
+  autosubmit: [],
+};
+```
+
+### 7.4 特殊情况处理
+
+#### 7.4.1 不受信任的iframe
+
+```javascript
+const untrustedIframeFillScript = {
+  script: [], // 可能为空，因为安全原因不填充
+  properties: {},
+  savedUrls: ["https://legitimate-site.com"],
+  untrustedIframe: true, // 标记为不受信任
+  autosubmit: [],
+};
+```
+
+#### 7.4.2 自定义字段（span元素）
+
+```javascript
+// span元素只需要填充，不需要click和focus
+const customFieldFillScript = {
+  script: [
+    // 普通输入字段
+    ["click_on_opid", "input_field_111"],
+    ["focus_by_opid", "input_field_111"],
+    ["fill_by_opid", "input_field_111", "value1"],
+
+    // span自定义字段（只有fill动作）
+    ["fill_by_opid", "span_field_222", "custom_value"],
+  ],
+  properties: {
+    delay_between_operations: 20,
+  },
+  savedUrls: [],
+  untrustedIframe: false,
+  autosubmit: [],
+};
+```
+
+### 7.5 执行流程
+
+1. **脚本生成**：`generateFillScript` 方法根据页面结构和密文数据生成脚本
+2. **脚本传递**：通过消息传递机制发送到内容脚本
+3. **脚本执行**：内容脚本按顺序执行每个动作：
+   - `click_on_opid`：模拟点击，激活字段
+   - `focus_by_opid`：设置焦点，准备输入
+   - `fill_by_opid`：填充实际值
+4. **延迟控制**：每个动作之间按 `delay_between_operations` 延迟
+5. **自动提交**：如果配置了 `autosubmit`，在填充完成后自动提交表单
+
+### 7.6 安全考虑
+
+- **URL验证**：`savedUrls` 用于验证当前页面是否匹配保存的登录项
+- **iframe检测**：`untrustedIframe` 防止在恶意iframe中泄露凭据
+- **字段验证**：每个 `opid` 都经过验证，确保字段存在且可填充
+- **值截断**：如果值超过字段的 `maxLength`，会自动截断
+
+### 7.7 性能优化
+
+- **批量生成**：所有动作一次性生成，减少计算开销
+- **最小化动作**：span元素跳过不必要的click和focus
+- **智能焦点**：最后聚焦到密码字段，方便用户提交
+- **并行处理**：TOTP字段可以并行生成验证码
+
+这个数据结构设计充分考虑了：
+
+- **可扩展性**：易于添加新的动作类型
+- **安全性**：包含多层安全验证机制
+- **性能**：优化了动作序列和执行效率
+- **兼容性**：支持各种页面结构和表单类型
+
+---
+
+这个综合分析涵盖了AutofillService的所有主要功能点，帮助理解其复杂的自动填充逻辑。

@@ -1340,4 +1340,474 @@ export const SubmitChangePasswordButtonNames: string[] = [
 
 ---
 
+## 🔔 表单提交监听与保存提示机制 [**已验证**]
+
+### 源代码验证结论
+
+通过对 `src/autofill` 目录的全面代码验证，确认了 Bitwarden 浏览器扩展采用**多层冗余检测**的表单提交监听与保存提示机制。
+
+### 🏗️ 核心架构验证
+
+**[代码实现图]** - 基于实际源代码验证的架构
+
+```mermaid
+graph TB
+    subgraph "内容脚本层 (Content Scripts)"
+        AOS[AutofillOverlayContentService<br/>实时表单监听]
+        AOS --> FTE[表单提交事件<br/>submit/click/keyup监听]
+        AOS --> UFD[用户填写数据<br/>userFilledFields存储]
+        AOS --> GFFD[getFormFieldData<br/>数据收集方法]
+    end
+
+    subgraph "后台服务层 (Background)"
+        ONB[OverlayNotificationsBackground<br/>HTTP请求监听]
+        NB[NotificationBackground<br/>保存提示决策]
+
+        ONB --> HBRQ[HTTP监听<br/>POST/PUT/PATCH方法]
+        ONB --> ASFR[activeFormSubmissionRequests<br/>请求追踪Set]
+        ONB --> MLFD[modifyLoginCipherFormData<br/>表单数据Map]
+
+        NB --> TALN[triggerAddLoginNotification<br/>新增登录提示]
+        NB --> TCPN[triggerChangedPasswordNotification<br/>密码变更提示]
+        NB --> TARPN[triggerAtRiskPasswordNotification<br/>风险密码提示]
+    end
+
+    subgraph "WebRequest API监听"
+        WRA[chrome.webRequest]
+        WRA --> OBR[onBeforeRequest<br/>请求拦截]
+        WRA --> OC[onCompleted<br/>响应确认]
+    end
+
+    subgraph "验证决策引擎"
+        SAN[shouldAttemptNotification<br/>提示条件判断]
+        SAN --> CT1{Change: newPassword && !username}
+        SAN --> CT2{Add: username && password}
+        SAN --> CT3{AtRisk: !newPassword}
+    end
+
+    AOS -->|formFieldSubmitted消息| ONB
+    ONB -->|存储数据| MLFD
+    WRA --> ONB
+    ONB -->|数据验证| SAN
+    SAN -->|触发通知| NB
+
+    classDef content fill:#e1f5fe
+    classDef background fill:#fff3e0
+    classDef api fill:#e8f5e8
+    classDef decision fill:#ffebee
+
+    class AOS,FTE,UFD,GFFD content
+    class ONB,NB,HBRQ,ASFR,MLFD,TALN,TCPN,TARPN background
+    class WRA,OBR,OC api
+    class SAN,CT1,CT2,CT3 decision
+```
+
+### 🔄 表单提交监听机制 [**源码验证**]
+
+#### 1. **多重监听策略** - `autofill-overlay-content.service.ts`
+
+**代码验证位置**：`src/autofill/services/autofill-overlay-content.service.ts`
+
+```typescript
+// ✅ 验证通过：三重监听机制
+// 1. 传统表单提交事件
+formElement.addEventListener(EVENTS.SUBMIT, this.handleFormFieldSubmitEvent);
+
+// 2. 提交按钮交互监听
+submitButton.addEventListener(EVENTS.KEYUP, handler);
+document.addEventListener(EVENTS.CLICK, handler);
+document.addEventListener(EVENTS.MOUSEUP, handler);
+
+// 3. Enter键检测
+if (eventCode === "Enter" && !(await this.isFieldCurrentlyFilling())) {
+  void this.handleOverlayRepositionEvent();
+}
+```
+
+**验证结果**：✅ **确认** - 扩展确实采用多重冗余监听策略，确保不遗漏任何提交行为。
+
+#### 2. **HTTP请求层监听** - `overlay-notifications.background.ts`
+
+**代码验证位置**：`src/autofill/background/overlay-notifications.background.ts:29`
+
+```typescript
+// ✅ 验证通过：HTTP方法监听
+private readonly formSubmissionRequestMethods: Set<string> = new Set(["POST", "PUT", "PATCH"]);
+
+// WebRequest API监听
+chrome.webRequest.onBeforeRequest.addListener(this.handleOnBeforeRequestEvent, requestFilter);
+chrome.webRequest.onCompleted.addListener(this.handleOnCompletedRequestEvent, requestFilter);
+```
+
+**验证结果**：✅ **确认** - 系统确实在网络层监听所有表单提交相关的HTTP方法。
+
+#### 3. **1.5秒回退超时机制** - `overlay-notifications.background.ts:148-156`
+
+```typescript
+// ✅ 验证通过：回退超时机制
+this.notificationFallbackTimeout = setTimeout(
+  () =>
+    this.setupNotificationInitTrigger(
+      sender.tab.id,
+      "",
+      this.modifyLoginCipherFormData.get(sender.tab.id),
+    ).catch((error) => this.logService.error(error)),
+  1500, // 1.5秒回退超时
+);
+```
+
+**验证结果**：✅ **确认** - 确实存在1.5秒的回退超时机制作为最后保障。
+
+### 🎯 保存提示决策逻辑 [**源码验证**]
+
+#### 决策优先级算法 - `overlay-notifications.background.ts:451-471`
+
+**代码验证位置**：`src/autofill/background/overlay-notifications.background.ts`
+
+```typescript
+// ✅ 验证通过：三级决策优先级
+private shouldAttemptNotification = (
+  modifyLoginData: ModifyLoginCipherFormData,
+  notificationType: NotificationType,
+): boolean => {
+  switch (notificationType) {
+    case NotificationTypes.Change:
+      return modifyLoginData?.newPassword && !modifyLoginData.username; // 最高优先级
+    case NotificationTypes.Add:
+      return modifyLoginData?.username && !!(modifyLoginData.password || modifyLoginData.newPassword);
+    case NotificationTypes.AtRiskPassword:
+      return !modifyLoginData.newPassword;
+    // ...
+  }
+};
+```
+
+**验证结果**：✅ **确认** - 决策逻辑完全按照分析的三级优先级执行。
+
+#### 重复检测机制 - `notification.background.ts:563-580`
+
+**代码验证位置**：`src/autofill/background/notification.background.ts`
+
+```typescript
+// ✅ 验证通过：重复检测逻辑
+const usernameMatches = ciphers.filter(
+  (c) => c.login.username != null && c.login.username.toLowerCase() === normalizedUsername,
+);
+
+if (addLoginIsEnabled && usernameMatches.length === 0) {
+  await this.pushAddLoginToQueue(loginDomain, login, tab); // 仅当无重复时添加
+  return true;
+}
+
+if (
+  changePasswordIsEnabled &&
+  usernameMatches.length === 1 &&
+  usernameMatches[0].login.password !== login.password
+) {
+  await this.pushChangePasswordToQueue(usernameMatches[0].id, loginDomain, login.password, tab);
+  return true;
+}
+```
+
+**验证结果**：✅ **确认** - 重复检测逻辑精确匹配分析结果。
+
+### 📊 数据收集与存储机制 [**源码验证**]
+
+#### 表单数据结构 - `ModifyLoginCipherFormData`
+
+**代码验证位置**：多个文件中的接口定义
+
+```typescript
+// ✅ 验证通过：数据结构完全匹配
+interface ModifyLoginCipherFormData {
+  uri: string; // 页面URL
+  username: string; // 用户名字段值
+  password: string; // 密码字段值
+  newPassword: string; // 新密码字段值（用于密码更改）
+}
+```
+
+#### 数据存储机制 - `overlay-notifications.background.ts:122-157`
+
+```typescript
+// ✅ 验证通过：表单数据存储逻辑
+private storeModifiedLoginFormData = (
+  message: OverlayNotificationsExtensionMessage,
+  sender: chrome.runtime.MessageSender,
+) => {
+  const { uri, username, password, newPassword } = message;
+
+  // 数据合并逻辑
+  const existingModifyLoginData = this.modifyLoginCipherFormData.get(sender.tab.id);
+  if (existingModifyLoginData) {
+    formData.username = formData.username || existingModifyLoginData.username;
+    formData.password = formData.password || existingModifyLoginData.password;
+    formData.newPassword = formData.newPassword || existingModifyLoginData.newPassword;
+  }
+
+  this.modifyLoginCipherFormData.set(sender.tab.id, formData);
+};
+```
+
+**验证结果**：✅ **确认** - 数据收集和存储机制完全符合分析结果。
+
+### 🔒 安全验证机制 [**源码验证**]
+
+#### 域名排除检查 - `overlay-notifications.background.ts:176-195`
+
+```typescript
+// ✅ 验证通过：域名安全检查
+private async isSenderFromExcludedDomain(sender: chrome.runtime.MessageSender): Promise<boolean> {
+  const senderOrigin = sender.origin;
+  const serverConfig = await this.notificationBackground.getActiveUserServerConfig();
+  const activeUserVault = serverConfig?.environment?.vault;
+
+  // 排除密码库自身域名
+  if (activeUserVault === senderOrigin) {
+    return true;
+  }
+
+  // 检查用户设置的排除域名
+  const excludedDomains = await this.notificationBackground.getExcludedDomains();
+  const senderDomain = new URL(senderOrigin).hostname;
+  return excludedDomains[senderDomain] !== undefined;
+}
+```
+
+**验证结果**：✅ **确认** - 安全检查机制完全匹配分析描述。
+
+### 🎯 经验证的关键特性总结
+
+| 特性                   | 验证状态 | 源码位置                                      | 备注                       |
+| ---------------------- | -------- | --------------------------------------------- | -------------------------- |
+| **多重监听机制**       | ✅ 确认  | `autofill-overlay-content.service.ts`         | 表单事件+按钮+HTTP三重保障 |
+| **HTTP请求监听**       | ✅ 确认  | `overlay-notifications.background.ts:29`      | POST/PUT/PATCH方法监听     |
+| **1.5秒回退超时**      | ✅ 确认  | `overlay-notifications.background.ts:148-156` | 防止遗漏动态提交           |
+| **三级决策优先级**     | ✅ 确认  | `overlay-notifications.background.ts:451-471` | Change > Add > AtRisk      |
+| **重复检测机制**       | ✅ 确认  | `notification.background.ts:563-580`          | 用户名大小写不敏感匹配     |
+| **数据收集结构**       | ✅ 确认  | `ModifyLoginCipherFormData` 接口              | 完整的表单数据结构         |
+| **域名安全排除**       | ✅ 确认  | `overlay-notifications.background.ts:176-195` | 密码库域名+用户排除列表    |
+| **WebRequest API集成** | ✅ 确认  | `overlay-notifications.background.ts:201-209` | 动态监听器管理             |
+
+### 🚀 架构优势确认
+
+经过源代码验证，确认 Bitwarden 表单提交监听机制的核心优势：
+
+1. **无遗漏保障**：多层冗余检测确保任何形式的表单提交都被捕获
+2. **智能决策**：基于表单数据内容智能判断提示类型和时机
+3. **安全优先**：多重安全验证防止在不当场景下提示保存
+4. **性能优化**：使用Map缓存和智能清理机制避免内存泄漏
+5. **现代Web兼容**：支持SPA、动态表单、无form标签等复杂场景
+
+**结论**：源代码验证完全支持了之前的分析结果，Bitwarden 确实实现了一个**工程级别的精密表单监听与保存提示系统**，在功能完整性、安全性和性能之间达到了良好的平衡。
+
+---
+
+## 🎯 form 元素的真实作用与源码验证
+
+### form 元素在字段分组中的真实角色
+
+基于对 `autofill.service.ts` 源码的深入验证，form 元素在 Bitwarden 扩展中发挥以下关键作用：
+
+#### 1. **字段归属标识符**
+
+Form 元素通过 `field.form` 属性为字段提供归属标识：
+
+```typescript
+// 位置: autofill.service.ts:332
+const passwordFieldsWithoutForm = passwordFields.filter((pf) => pf.form === undefined);
+```
+
+#### 2. **智能关联逻辑** - 处理结构不良的表单
+
+**位置**: `autofill.service.ts:336-352`
+
+```typescript
+// 智能推断：3个密码字段 + 1个表单 + 有字段在表单外
+// 很可能是结构不良的密码更改表单
+if (passwordFields.length === 3 && formCount == 1 && passwordFieldsWithoutForm.length > 0) {
+  const soloFormKey = formKeys[0];
+
+  const atLeastOnePasswordFieldWithinSoloForm =
+    passwordFields.filter((pf) => pf.form !== null && pf.form === soloFormKey).length > 0;
+
+  if (atLeastOnePasswordFieldWithinSoloForm) {
+    // 🔑 关键：将表单外的密码字段归属到这个表单
+    passwordFieldsWithoutForm.forEach((pf) => {
+      pf.form = soloFormKey; // form作为字段归属标识
+    });
+  }
+}
+```
+
+#### 3. **按表单分组处理字段**
+
+**位置**: `autofill.service.ts:354-377`
+
+```typescript
+// 遍历每个表单，按表单分组处理字段
+for (const formKey in pageDetails.forms) {
+  if (!pageDetails.forms.hasOwnProperty(formKey)) {
+    continue;
+  }
+
+  // 🔑 关键：根据form分组过滤密码字段
+  const formPasswordFields = passwordFields.filter((pf) => formKey === pf.form);
+
+  if (formPasswordFields.length > 0) {
+    // 在同一表单内查找用户名字段
+    let uf = this.findUsernameField(pageDetails, formPasswordFields[0], false, false, false);
+    if (uf == null) {
+      uf = this.findUsernameField(pageDetails, formPasswordFields[0], true, true, false);
+    }
+
+    // 构建表单数据对象
+    formData.push({
+      form: pageDetails.forms[formKey], // 表单元数据
+      password: formPasswordFields[0], // 主密码字段
+      username: uf, // 关联的用户名字段
+      passwords: formPasswordFields, // 同表单的所有密码字段
+    });
+  }
+}
+```
+
+#### 4. **上下文容器功能**
+
+Form 元素为相关字段提供逻辑分组容器，确保：
+
+- **用户名与密码字段的正确关联**
+- **多密码字段场景的智能处理**（如密码更改表单）
+- **表单外字段的智能归属**
+
+### 核心价值总结
+
+1. **智能字段归属**: 自动将孤立字段归属到相关表单
+2. **逻辑分组**: 为相关字段提供分组依据
+3. **容错机制**: 处理结构不良或现代 SPA 中的复杂表单
+4. **上下文感知**: 基于表单上下文进行智能决策
+
+这种精细化的 form 元素处理机制体现了 Bitwarden 在复杂 Web 环境下的工程实践深度。
+
+### form 元素的事件监听机制
+
+#### 1. **SUBMIT 事件监听的建立**
+
+**位置**: `autofill-overlay-content.service.ts:445-462`
+
+```typescript
+/**
+ * 为包含表单的字段设置提交监听器
+ * 在表单元素上建立submit事件监听器，在提交按钮元素上建立click监听器
+ */
+private async setupSubmitListenerOnFieldWithForms(formFieldElement: FillableFormFieldElement) {
+  const formElement = formFieldElement.form;
+  if (formElement && !this.formElements.has(formElement)) {
+    this.formElements.add(formElement);
+    // 🔑 关键：为form元素添加SUBMIT事件监听
+    formElement.addEventListener(EVENTS.SUBMIT, this.handleFormFieldSubmitEvent);
+
+    const closestSubmitButton = await this.findSubmitButton(formElement);
+
+    // 如果form内没有提交按钮，检查表单外的提交按钮
+    if (!closestSubmitButton) {
+      await this.setupSubmitListenerOnFormlessField(formFieldElement);
+      return;
+    }
+
+    this.setupSubmitButtonEventListeners(closestSubmitButton);
+    return;
+  }
+}
+```
+
+#### 2. **SUBMIT 事件处理器**
+
+**位置**: `autofill-overlay-content.service.ts:627-629`
+
+```typescript
+/**
+ * 处理表单提交时的自动填充覆盖层重新定位
+ */
+private handleFormFieldSubmitEvent = () => {
+  // 🔑 关键：发送表单提交消息，包含表单数据
+  void this.sendExtensionMessage("formFieldSubmitted", this.getFormFieldData());
+};
+```
+
+#### 3. **表单数据收集**
+
+**位置**: `autofill-overlay-content.service.ts:648-655`
+
+```typescript
+/**
+ * 返回用于添加登录和更改密码通知的表单字段数据
+ */
+private getFormFieldData = (): ModifyLoginCipherFormData => {
+  return {
+    uri: globalThis.document.URL,                          // 当前页面URL
+    username: this.userFilledFields["username"]?.value || "",   // 用户名字段值
+    password: this.userFilledFields["password"]?.value || "",   // 密码字段值
+    newPassword: this.userFilledFields["newPassword"]?.value || "", // 新密码字段值
+  };
+};
+```
+
+#### 4. **form 元素在自动提交中的操作**
+
+**位置**: `auto-submit-login.ts:133-149`
+
+```typescript
+// 根据opid获取form元素
+const formElement = getAutofillFormElementByOpid(formOpid);
+if (!formElement) {
+  triggerAutoSubmitOnFormlessFields(fillScript); // 处理无form情况
+  return;
+}
+
+// 🔑 关键：三种自动提交方式的优先级处理
+// 1. 优先查找并点击提交按钮
+if (submitElementFoundAndClicked(formElement)) {
+  return;
+}
+
+// 2. 使用现代API提交表单
+if (formElement.requestSubmit) {
+  formElement.requestSubmit(); // HTML5标准方法，会触发submit事件
+  return;
+}
+
+// 3. 降级到传统提交方法
+formElement.submit(); // 传统方法，不触发submit事件
+```
+
+#### 5. **防重复监听机制**
+
+**位置**: `autofill-overlay-content.service.ts:447-448`
+
+```typescript
+// 🔑 关键：使用Set防止重复监听同一form元素
+if (formElement && !this.formElements.has(formElement)) {
+  this.formElements.add(formElement);
+  formElement.addEventListener(EVENTS.SUBMIT, this.handleFormFieldSubmitEvent);
+}
+```
+
+### 事件监听的核心特性
+
+1. **去重机制**: 使用 `this.formElements.has()` 防止重复监听
+2. **数据收集**: 提交时自动收集用户填写的表单数据
+3. **消息传递**: 通过 `formFieldSubmitted` 消息通知background script
+4. **多级提交**: 支持按钮点击、`requestSubmit()`、`submit()` 三种提交方式
+5. **容错处理**: 处理有form和无form的不同场景
+
+### form 元素监听机制的价值
+
+- **实时监测**: 准确捕获用户的表单提交行为
+- **数据收集**: 为保存提示功能提供必要的表单数据
+- **性能优化**: 通过去重机制避免重复监听和内存泄漏
+- **兼容性**: 支持现代和传统的表单提交方式
+
+---
+
 这个综合分析涵盖了AutofillService的所有主要功能点，帮助理解其复杂的自动填充逻辑。
